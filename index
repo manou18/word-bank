@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Word Bank Generator - Datamuse (up to 1000 words)</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        body {
+            background: #f5f7fa;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            max-width: 850px;
+            width: 100%;
+            background: white;
+            padding: 30px 25px;
+            border-radius: 20px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-top: 0;
+            font-size: 2rem;
+        }
+        .field-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #34495e;
+        }
+        .input-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .input-row input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 2px solid #dce1e8;
+            border-radius: 12px;
+            font-size: 1rem;
+            outline: none;
+            transition: 0.2s;
+            min-width: 150px;
+        }
+        .input-row input:focus {
+            border-color: #3498db;
+            box-shadow: 0 0 0 3px rgba(52,152,219,0.2);
+        }
+        .btn {
+            padding: 10px 22px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+            background: #3498db;
+            color: white;
+            white-space: nowrap;
+        }
+        .btn:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+        }
+        .btn-danger {
+            background: #e74c3c;
+        }
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+        .btn-success {
+            background: #2ecc71;
+        }
+        .btn-success:hover {
+            background: #27ae60;
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .seeds-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 10px 0;
+            min-height: 50px;
+        }
+        .seed-tag {
+            background: #ecf0f1;
+            padding: 6px 14px 6px 10px;
+            border-radius: 30px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.95rem;
+        }
+        .seed-tag .remove {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.2s;
+        }
+        .seed-tag .remove:hover {
+            background: #c0392b;
+        }
+        .result-area {
+            margin-top: 30px;
+            border-top: 2px dashed #bdc3c7;
+            padding-top: 20px;
+        }
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .word-count {
+            background: #2c3e50;
+            color: white;
+            padding: 4px 14px;
+            border-radius: 30px;
+            font-size: 0.9rem;
+        }
+        #wordList {
+            list-style: none;
+            padding: 0;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 15px 0;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ecf0f1;
+            padding: 10px;
+            border-radius: 12px;
+        }
+        #wordList li {
+            background: #f1f9ff;
+            padding: 6px 16px;
+            border-radius: 30px;
+            border: 1px solid #d6eaf8;
+            font-size: 0.95rem;
+        }
+        .loader {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            font-size: 1.2rem;
+            color: #7f8c8d;
+        }
+        .loader.show {
+            display: block;
+        }
+        .error-msg {
+            color: #e74c3c;
+            font-weight: 500;
+        }
+        .actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+        .info-note {
+            background: #fef9e7;
+            padding: 12px 18px;
+            border-radius: 12px;
+            border-left: 6px solid #f1c40f;
+            margin: 15px 0;
+            font-size: 0.9rem;
+            color: #7d6608;
+        }
+        .info-note strong {
+            color: #b7950b;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📚 Word Bank Generator</h1>
+    <div class="info-note">
+        ⚡ Uses <strong>Datamuse API</strong> (free, up to 100k requests/day).  
+        <br>🔹 Each seed fetches <strong>up to 1000 words</strong> (the API limit).  
+        <br>🔹 Enter a <strong>Category</strong> and <strong>Seeds</strong> (keywords in English for best results), then click "Fetch Words".
+    </div>
+
+    <!-- Category -->
+    <div class="field-group">
+        <label for="categoryInput">📂 Category</label>
+        <input type="text" id="categoryInput" placeholder="e.g. Metals, Food, Emotions" value="Metals">
+    </div>
+
+    <!-- Seeds -->
+    <div class="field-group">
+        <label>🌱 Seeds (keywords)</label>
+        <div class="input-row">
+            <input type="text" id="seedInput" placeholder="Enter a seed (e.g. iron, gold)" value="iron">
+            <button class="btn" id="addSeedBtn">➕ Add Seed</button>
+        </div>
+        <div class="seeds-list" id="seedsContainer"></div>
+    </div>
+
+    <!-- Fetch and Download -->
+    <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px;">
+        <button class="btn btn-success" id="fetchBtn">🚀 Fetch Words</button>
+        <button class="btn" id="downloadBtn" disabled>💾 Download JSON</button>
+    </div>
+
+    <!-- Loader -->
+    <div class="loader" id="loader">⏳ Fetching words (up to 1000 per seed)... may take a few seconds</div>
+
+    <!-- Results -->
+    <div class="result-area" id="resultArea">
+        <div class="result-header">
+            <h3 style="margin:0;">📋 Word Bank</h3>
+            <span class="word-count" id="wordCount">0 words</span>
+        </div>
+        <ul id="wordList"></ul>
+        <div id="resultMessage"></div>
+    </div>
+</div>
+
+<script>
+    (function() {
+        // DOM elements
+        const categoryInput = document.getElementById('categoryInput');
+        const seedInput = document.getElementById('seedInput');
+        const addSeedBtn = document.getElementById('addSeedBtn');
+        const seedsContainer = document.getElementById('seedsContainer');
+        const fetchBtn = document.getElementById('fetchBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const loader = document.getElementById('loader');
+        const wordList = document.getElementById('wordList');
+        const wordCount = document.getElementById('wordCount');
+        const resultMessage = document.getElementById('resultMessage');
+
+        // State
+        let seeds = [];
+        let lastResult = null;
+
+        // Render seeds
+        function renderSeeds() {
+            seedsContainer.innerHTML = '';
+            if (seeds.length === 0) {
+                seedsContainer.innerHTML = '<span style="color:#95a5a6; font-size:0.95rem;">No seeds added yet</span>';
+                return;
+            }
+            seeds.forEach((seed, index) => {
+                const tag = document.createElement('div');
+                tag.className = 'seed-tag';
+                tag.innerHTML = `
+                    <span>${seed}</span>
+                    <button class="remove" data-index="${index}">✕</button>
+                `;
+                seedsContainer.appendChild(tag);
+            });
+            document.querySelectorAll('.seed-tag .remove').forEach(btn => {
+                btn.addEventListener('click', function(e) {
+                    const idx = parseInt(this.dataset.index);
+                    removeSeed(idx);
+                });
+            });
+        }
+
+        // Add seed
+        function addSeed() {
+            const val = seedInput.value.trim();
+            if (!val) {
+                alert('Please enter a seed (keyword)');
+                return;
+            }
+            if (seeds.includes(val)) {
+                alert('This seed already exists');
+                return;
+            }
+            seeds.push(val);
+            seedInput.value = '';
+            renderSeeds();
+            updateButtons();
+        }
+
+        // Remove seed
+        function removeSeed(index) {
+            seeds.splice(index, 1);
+            renderSeeds();
+            updateButtons();
+        }
+
+        // Update buttons state
+        function updateButtons() {
+            const hasSeeds = seeds.length > 0;
+            const hasCategory = categoryInput.value.trim().length > 0;
+            fetchBtn.disabled = !(hasSeeds && hasCategory);
+            downloadBtn.disabled = (lastResult === null);
+        }
+
+        // Fetch words (max=1000)
+        async function fetchWords() {
+            const category = categoryInput.value.trim();
+            if (!category) {
+                alert('Please enter a category');
+                return;
+            }
+            if (seeds.length === 0) {
+                alert('Please add at least one seed');
+                return;
+            }
+
+            loader.classList.add('show');
+            fetchBtn.disabled = true;
+            downloadBtn.disabled = true;
+            wordList.innerHTML = '';
+            wordCount.textContent = 'Loading...';
+            resultMessage.innerHTML = '';
+
+            const allWordsSet = new Set();
+            const errors = [];
+
+            // Each seed requests up to 1000 words
+            const promises = seeds.map(async (seed) => {
+                const url = `https://api.datamuse.com/words?ml=${encodeURIComponent(seed)}&max=1000`;
+                try {
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    const data = await response.json();
+                    const words = data.map(item => item.word).filter(w => w);
+                    return { seed, words, success: true };
+                } catch (err) {
+                    return { seed, error: err.message, success: false };
+                }
+            });
+
+            const results = await Promise.allSettled(promises);
+            results.forEach(result => {
+                if (result.status === 'fulfilled') {
+                    const data = result.value;
+                    if (data.success) {
+                        data.words.forEach(w => allWordsSet.add(w));
+                    } else {
+                        errors.push(`❌ Seed "${data.seed}": ${data.error}`);
+                    }
+                } else {
+                    errors.push(`❌ Unexpected error: ${result.reason}`);
+                }
+            });
+
+            const finalWords = Array.from(allWordsSet).sort();
+
+            lastResult = {
+                category: category,
+                seeds: seeds.slice(),
+                words: finalWords,
+                total: finalWords.length,
+                timestamp: new Date().toISOString()
+            };
+
+            displayResults(finalWords, errors);
+            loader.classList.remove('show');
+            fetchBtn.disabled = false;
+            downloadBtn.disabled = false;
+            updateButtons();
+        }
+
+        // Display results
+        function displayResults(words, errors) {
+            wordList.innerHTML = '';
+            if (words.length === 0) {
+                wordList.innerHTML = '<li style="color:#7f8c8d;">No words retrieved</li>';
+            } else {
+                words.forEach(w => {
+                    const li = document.createElement('li');
+                    li.textContent = w;
+                    wordList.appendChild(li);
+                });
+            }
+            wordCount.textContent = `${words.length} words`;
+
+            let msg = '';
+            if (errors.length > 0) {
+                msg = `<div class="error-msg">${errors.join('<br>')}</div>`;
+            }
+            if (words.length > 0) {
+                msg += `<div style="margin-top:10px;color:#27ae60;">✅ Successfully fetched ${words.length} words (max 1000 per seed)</div>`;
+            } else {
+                msg += `<div style="margin-top:10px;color:#e67e22;">⚠️ No words retrieved. Try changing seeds.</div>`;
+            }
+            resultMessage.innerHTML = msg;
+        }
+
+        // Download JSON
+        function downloadJSON() {
+            if (!lastResult) return;
+            const jsonStr = JSON.stringify(lastResult, null, 2);
+            const blob = new Blob([jsonStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `wordbank_${lastResult.category}_${new Date().toISOString().slice(0,10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // Event listeners
+        addSeedBtn.addEventListener('click', addSeed);
+        seedInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addSeed();
+        });
+        fetchBtn.addEventListener('click', fetchWords);
+        downloadBtn.addEventListener('click', downloadJSON);
+        categoryInput.addEventListener('input', updateButtons);
+
+        // Default seeds and category
+        seeds = ['iron', 'gold', 'copper', 'steel'];
+        renderSeeds();
+        updateButtons();
+        categoryInput.value = 'Metals';
+    })();
+</script>
+</body>
+</html>
