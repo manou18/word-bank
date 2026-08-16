@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Word Codex — Word Bank Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-deep:#161c37;
+    --bg-panel:#1c2344;
+    --bg-panel-2:#232a52;
+    --bg-panel-3:#2c3563;
+    --text:#f1ecdd;
+    --text-dim:#a9b0d4;
+    --text-faint:#6b73a0;
+    --border:#3c4576;
+    --border-soft:#2e3660;
+    --gold:#d4a24c;
+    --gold-dim:#8a723f;
+    --danger:#c1583f;
+    --ok:#7fa876;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:
+      radial-gradient(ellipse 900px 500px at 15% -10%, #2a3364 0%, transparent 60%),
+      radial-gradient(ellipse 700px 500px at 105% 10%, #26305e 0%, transparent 55%),
+      var(--bg-deep);
+    color:var(--text);
+    font-family:'Manrope', sans-serif;
+    min-height:100vh;
+  }
+  ::selection{ background:var(--gold); color:#1c2344; }
+
+  /* ===== Header ===== */
+  header{
+    padding:34px 28px 24px;
+    text-align:center;
+    border-bottom:1px solid var(--border-soft);
+    position:relative;
+  }
+  header::before{
+    content:"❦";
+    display:block;
+    color:var(--gold-dim);
+    font-size:20px;
+    margin-bottom:10px;
+  }
+  h1{
+    font-family:'Cinzel', serif;
+    font-weight:700;
+    font-size:clamp(26px, 4vw, 38px);
+    margin:0 0 6px;
+    letter-spacing:.5px;
+    background:linear-gradient(180deg, #f6ecd0, var(--gold));
+    -webkit-background-clip:text;
+    background-clip:text;
+    color:transparent;
+  }
+  header p{
+    color:var(--text-dim);
+    font-size:13.5px;
+    margin:0;
+    max-width:520px;
+    margin-inline:auto;
+    line-height:1.6;
+  }
+  header code{
+    background:var(--bg-panel-3);
+    border:1px solid var(--border);
+    padding:1px 6px;
+    border-radius:5px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:12px;
+    color:var(--gold);
+  }
+
+  /* ===== Layout ===== */
+  .layout{
+    max-width:1180px;
+    margin:0 auto;
+    padding:26px 20px 60px;
+    display:grid;
+    grid-template-columns:270px 1fr;
+    gap:22px;
+  }
+  @media (max-width: 860px){
+    .layout{ grid-template-columns:1fr; }
+  }
+
+  /* ===== Sidebar: category codex ===== */
+  .codex-spine{
+    background:var(--bg-panel);
+    border:1px solid var(--border-soft);
+    border-radius:var(--radius);
+    padding:14px;
+    align-self:start;
+    position:sticky;
+    top:16px;
+  }
+  .codex-spine h2{
+    font-family:'Cinzel', serif;
+    font-size:13px;
+    letter-spacing:1.5px;
+    text-transform:uppercase;
+    color:var(--text-faint);
+    margin:4px 6px 10px;
+  }
+  .cat-btn{
+    width:100%;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    background:transparent;
+    border:1px solid transparent;
+    border-radius:10px;
+    padding:9px 10px;
+    margin-bottom:3px;
+    cursor:pointer;
+    text-align:left;
+    color:var(--text-dim);
+    font-family:inherit;
+    font-size:13px;
+    font-weight:600;
+    transition:background .15s, border-color .15s, color .15s;
+  }
+  .cat-btn:hover{ background:var(--bg-panel-2); color:var(--text); }
+  .cat-btn.active{
+    background:var(--bg-panel-3);
+    border-color:var(--cat-color, var(--gold));
+    color:var(--text);
+  }
+  .cat-btn .swatch{
+    width:9px; height:9px; border-radius:50%;
+    background:var(--cat-color, var(--gold));
+    flex:none;
+    box-shadow:0 0 0 3px color-mix(in srgb, var(--cat-color, var(--gold)) 20%, transparent);
+  }
+  .cat-btn .cn{ flex:1; }
+  .cat-btn .cc{
+    font-family:'JetBrains Mono', monospace;
+    font-size:10.5px;
+    color:var(--text-faint);
+    font-weight:400;
+  }
+
+  /* ===== Main panel ===== */
+  .main-panel{ display:flex; flex-direction:column; gap:18px; min-width:0; }
+
+  .card{
+    background:var(--bg-panel);
+    border:1px solid var(--border-soft);
+    border-radius:var(--radius);
+    padding:20px;
+  }
+  .card-title{
+    font-family:'Cinzel', serif;
+    font-size:17px;
+    font-weight:600;
+    margin:0 0 4px;
+    display:flex; align-items:center; gap:9px;
+  }
+  .card-title .icon{ font-size:20px; }
+  .card-sub{ color:var(--text-dim); font-size:12.5px; margin:0 0 16px; line-height:1.5; }
+
+  /* Seed chips */
+  .seed-row{ display:flex; flex-wrap:wrap; gap:7px; margin-bottom:12px; }
+  .seed-chip{
+    display:flex; align-items:center; gap:6px;
+    background:var(--bg-panel-2);
+    border:1px solid var(--border);
+    color:var(--text);
+    border-radius:999px;
+    padding:5px 6px 5px 12px;
+    font-size:12.5px;
+    font-weight:500;
+  }
+  .seed-chip button{
+    background:var(--bg-panel-3);
+    border:none;
+    color:var(--text-dim);
+    width:18px; height:18px;
+    border-radius:50%;
+    cursor:pointer;
+    font-size:11px;
+    line-height:1;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .seed-chip button:hover{ background:var(--danger); color:#fff; }
+  .seed-add{ display:flex; gap:8px; margin-bottom:16px; }
+  .seed-add input{
+    flex:1;
+    background:var(--bg-panel-2);
+    border:1px solid var(--border);
+    color:var(--text);
+    border-radius:9px;
+    padding:9px 12px;
+    font-size:13px;
+    font-family:inherit;
+  }
+  .seed-add input:focus{ outline:none; border-color:var(--gold-dim); }
+
+  /* Buttons */
+  .btn{
+    border:1px solid var(--border);
+    background:var(--bg-panel-2);
+    color:var(--text);
+    border-radius:9px;
+    padding:9px 16px;
+    font-family:inherit;
+    font-size:13px;
+    font-weight:600;
+    cursor:pointer;
+    transition:background .15s, border-color .15s, transform .1s;
+    white-space:nowrap;
+  }
+  .btn:hover{ background:var(--bg-panel-3); }
+  .btn:active{ transform:scale(.97); }
+  .btn:disabled{ opacity:.45; cursor:default; }
+  .btn.gold{
+    background:linear-gradient(180deg, #e6c069, var(--gold));
+    color:#1c2344;
+    border-color:var(--gold);
+  }
+  .btn.gold:hover{ filter:brightness(1.06); }
+  .btn.ghost{ background:transparent; }
+  .btn.small{ padding:6px 11px; font-size:12px; }
+  .btn-row{ display:flex; gap:9px; flex-wrap:wrap; }
+
+  .status-line{
+    font-family:'JetBrains Mono', monospace;
+    font-size:12px;
+    color:var(--text-dim);
+    min-height:16px;
+    margin:2px 0 14px;
+  }
+  .status-line.err{ color:var(--danger); }
+  .status-line.ok{ color:var(--ok); }
+
+  /* Stats bar */
+  .stats-bar{
+    display:flex; gap:10px; flex-wrap:wrap;
+    margin-bottom:16px;
+  }
+  .stat-pill{
+    background:var(--bg-panel-2);
+    border:1px solid var(--border-soft);
+    border-radius:9px;
+    padding:8px 14px;
+    font-size:12px;
+    color:var(--text-dim);
+  }
+  .stat-pill b{ color:var(--text); font-family:'JetBrains Mono', monospace; font-size:13px; }
+
+  /* Result cards */
+  .result-toolbar{
+    display:flex; justify-content:space-between; align-items:center; gap:10px;
+    flex-wrap:wrap; margin-bottom:12px;
+  }
+  .result-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
+    gap:10px;
+  }
+  .word-card{
+    background:var(--bg-panel-2);
+    border:1px solid var(--border-soft);
+    border-radius:11px;
+    padding:12px 13px;
+    display:flex;
+    gap:10px;
+    align-items:flex-start;
+    transition:border-color .15s, background .15s;
+  }
+  .word-card.checked{
+    border-color:var(--cat-color, var(--gold));
+    background:var(--bg-panel-3);
+  }
+  .word-card input[type=checkbox]{
+    margin-top:3px;
+    width:16px; height:16px;
+    accent-color:var(--cat-color, var(--gold));
+    flex:none;
+    cursor:pointer;
+  }
+  .word-card .wc-body{ flex:1; min-width:0; }
+  .word-card .wc-top{
+    display:flex; align-items:baseline; gap:8px; margin-bottom:5px; flex-wrap:wrap;
+  }
+  .word-card .wc-word{
+    font-family:'JetBrains Mono', monospace;
+    font-weight:700;
+    font-size:14.5px;
+    letter-spacing:.5px;
+  }
+  .tier-select{
+    background:var(--bg-panel);
+    border:1px solid var(--border);
+    color:var(--text-dim);
+    border-radius:6px;
+    padding:2px 7px;
+    font-size:10.5px;
+    font-family:'JetBrains Mono', monospace;
+    text-transform:uppercase;
+    cursor:pointer;
+  }
+  .word-card input[type=text]{
+    width:100%;
+    background:var(--bg-panel);
+    border:1px solid var(--border);
+    color:var(--text);
+    border-radius:7px;
+    padding:6px 9px;
+    font-size:12px;
+    font-family:inherit;
+  }
+  .word-card input[type=text]:focus{ outline:none; border-color:var(--gold-dim); }
+
+  .empty-note{
+    color:var(--text-faint);
+    font-size:13px;
+    text-align:center;
+    padding:40px 20px;
+    border:1px dashed var(--border);
+    border-radius:11px;
+  }
+
+  /* Export panel */
+  textarea{
+    width:100%;
+    min-height:90px;
+    background:var(--bg-panel-2);
+    border:1px solid var(--border);
+    color:var(--text-dim);
+    border-radius:9px;
+    padding:11px 13px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11.5px;
+    line-height:1.5;
+    resize:vertical;
+  }
+  textarea:focus{ outline:none; border-color:var(--gold-dim); }
+  .export-out{ margin-top:12px; }
+  .export-out textarea{ min-height:160px; color:var(--text); }
+
+  .tag-note{
+    font-size:11.5px;
+    color:var(--text-faint);
+    line-height:1.6;
+    margin-top:10px;
+  }
+
+  footer{
+    text-align:center;
+    color:var(--text-faint);
+    font-size:11.5px;
+    padding:20px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>The Word Codex</h1>
+  <p>An external scribe's desk for <em>Kingdoms &amp; Words</em>. Pick a category, gather related words from the free <code>api.datamuse.com</code>, review each entry, then export a ready-to-paste block for the game's <code>WORDS</code> object.</p>
+</header>
+
+<div class="layout">
+  <aside class="codex-spine">
+    <h2>Categories</h2>
+    <div id="catList"></div>
+  </aside>
+
+  <main class="main-panel">
+
+    <section class="card" id="seedCard">
+      <h3 class="card-title"><span class="icon" id="catIconLabel"></span><span id="catNameLabel"></span></h3>
+      <p class="card-sub">Search terms sent to Datamuse. Defaults are tuned to this category — add your own to dig further, or remove ones that drift off-topic. 20 seeds means a richer bank, but gathering runs seed-by-seed, so a full pass can take fifteen seconds or so — the status line below tracks progress.</p>
+      <div class="seed-row" id="seedRow"></div>
+      <div class="seed-add">
+        <input type="text" id="seedInput" placeholder="Add a search term, e.g. &quot;forge&quot;">
+        <button class="btn" id="addSeedBtn">Add</button>
+      </div>
+      <div class="btn-row">
+        <button class="btn gold" id="fetchBtn">🔎 Gather words</button>
+        <button class="btn ghost" id="resetSeedsBtn">Reset to defaults</button>
+      </div>
+      <div class="status-line" id="statusLine"></div>
+    </section>
+
+    <section class="card" id="resultsCard" style="display:none;">
+      <h3 class="card-title"><span class="icon">📜</span>Results</h3>
+      <div class="stats-bar" id="statsBar"></div>
+      <div class="result-toolbar">
+        <div class="btn-row">
+          <button class="btn small" id="selAllBtn">Select all</button>
+          <button class="btn small" id="selNoneBtn">Select none</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn small gold" id="exportBtn">Export selected →</button>
+        </div>
+      </div>
+      <div class="result-grid" id="resultGrid"></div>
+    </section>
+
+    <section class="card">
+      <h3 class="card-title"><span class="icon">📚</span>Existing bank (optional)</h3>
+      <p class="card-sub">Paste the words already in this category's <code>list</code> in the game file — one per line, or the whole JS block. Anything matching will be skipped automatically when you gather new words.</p>
+      <textarea id="existingBank" placeholder="IRON&#10;GOLD&#10;TIN&#10;...or paste the whole {word:&quot;IRON&quot;, ...} block, either works."></textarea>
+    </section>
+
+    <section class="card" id="exportCard" style="display:none;">
+      <h3 class="card-title"><span class="icon">📋</span>Export block</h3>
+      <p class="card-sub">Formatted exactly like the entries already in <code>WORDS</code>. Copy this and paste it inside the matching category's <code>list:[ ... ]</code> array.</p>
+      <div class="export-out">
+        <textarea id="exportOut" readonly></textarea>
+      </div>
+      <div class="btn-row" style="margin-top:10px;">
+        <button class="btn gold small" id="copyBtn">Copy to clipboard</button>
+        <button class="btn small" id="downloadBtn">Download .txt</button>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer>Runs entirely in your browser — nothing is sent anywhere except Datamuse's public, keyless API. Safe to keep open in a tab while you build the bank incrementally.</footer>
+
+<script>
+/* ============================= CATEGORY DATA =============================
+   Mirrors the categories, icons and colors already defined in the game's
+   WORDS object, so anything exported here drops straight in. */
+const CATEGORIES = {
+  metals:  { label:"Metals",           icon:"⛏️", color:"#8a94b8", seeds:["metal","ore","alloy","smith","mineral","iron","steel","forge","blacksmith","bronze","copper","gold","silver","mining","metallurgy","smelting","ingot","anvil","mine","tin"] },
+  food:    { label:"Food",             icon:"🍲", color:"#d99a5b", seeds:["food","meal","cooking","dish","ingredient","kitchen","recipe","bake","spice","feast","meat","vegetable","fruit","bread","soup","stew","farming","nutrition","cuisine","pantry"] },
+  grain:   { label:"Grain",            icon:"🌾", color:"#c9a63f", seeds:["grain","wheat","harvest","crop","flour","barley","oats","rye","corn","rice","mill","milling","farming","field","sheaf","thresh","agriculture","seed","bushel","granary"] },
+  animals: { label:"Animals",          icon:"🐑", color:"#7fa876", seeds:["animal","livestock","wildlife","creature","beast","mammal","bird","fish","reptile","insect","predator","herd","flock","pet","hunting","prey","breed","species","zoo","herding"] },
+  magic:   { label:"Magic",            icon:"🔮", color:"#9b7fc4", seeds:["magic","spell","sorcery","enchantment","ritual","wizard","witch","potion","curse","charm","mystic","occult","arcane","alchemy","supernatural","conjure","incantation","rune","divination","mysticism"] },
+  cloth:   { label:"Cloth",            icon:"🧵", color:"#c77dab", seeds:["cloth","fabric","textile","weaving","garment","thread","yarn","sewing","tailor","wool","cotton","silk","knitting","embroidery","loom","dye","spinning","needle","stitch","clothing"] },
+  sea:     { label:"Sea",              icon:"🎣", color:"#5b9bc4", seeds:["sea","ocean","fishing","boat","coast","fish","ship","sailing","harbor","wave","tide","marine","nautical","fisherman","shore","beach","dock","anchor","current","maritime"] },
+  stone:   { label:"Stone",            icon:"🪨", color:"#9c9484", seeds:["stone","rock","quarry","masonry","building","brick","wall","construction","mason","granite","marble","boulder","cliff","mountain","cave","architecture","foundation","mortar","chisel","carve"] },
+  herbs:   { label:"Herbs",            icon:"🌿", color:"#a3a15c", seeds:["herb","plant","remedy","spice","medicine","tea","healing","botanical","garden","flower","root","leaf","tonic","apothecary","herbal","cure","treatment","ointment","seasoning","aromatic"] },
+  nature:  { label:"Nature",           icon:"🌲", color:"#4a8f7f", seeds:["nature","forest","wilderness","landscape","outdoors","mountain","river","lake","valley","tree","meadow","wild","ecosystem","environment","natural","scenery","terrain","countryside","woodland","earth"] },
+  war:     { label:"War & Defense",    icon:"⚔️", color:"#8f3d35", seeds:["war","battle","military","combat","weapon","soldier","army","fight","warrior","sword","shield","siege","conflict","defense","attack","strategy","troop","warfare","fortress","victory"] },
+  royalty: { label:"Royalty & Court",  icon:"👑", color:"#5c4a8f", seeds:["royalty","king","kingdom","noble","monarchy","queen","prince","princess","throne","crown","palace","court","aristocracy","nobility","ruler","empire","dynasty","reign","sovereign","majesty"] },
+  music:   { label:"Music",            icon:"🎻", color:"#3f8fa3", seeds:["music","song","instrument","melody","sound","singing","orchestra","band","rhythm","harmony","composer","musician","concert","tune","lyrics","symphony","opera","choir","dance","performance"] },
+  weather: { label:"Weather",          icon:"🌦️", color:"#8aa8b8", seeds:["weather","storm","climate","rain","sky","wind","snow","thunder","cloud","temperature","season","forecast","atmosphere","humidity","sunshine","precipitation","hurricane","tornado","frost","meteorology"] },
+  stars:   { label:"Stars & Omens",    icon:"🌌", color:"#4a3f7a", seeds:["star","astronomy","sky","cosmos","celestial","planet","galaxy","universe","moon","comet","constellation","telescope","space","orbit","astrology","zodiac","nebula","meteor","night","eclipse"] },
+};
+
+let activeCat = "metals";
+let activeSeeds = [...CATEGORIES[activeCat].seeds];
+let results = []; // {word, clue, tier, checked}
+
+/* ============================= SAFETY / QUALITY FILTERS =============================
+   Same rules used inside the game's own (now-removed) discover tool. */
+const UNSAFE_DEF_MARKERS = [
+  'vulgar','offensive','slur','derogatory','ethnic slur','obscene','profane',
+  'sexual','penis','vagina','intercourse','ejaculat','masturbat','orgasm',
+  'cocaine','heroin','marijuana','narcotic','drug slang',
+  'racial','racist','contempt','disparaging','pejorative'
+];
+
+function cleanDatamuseDef(raw){
+  if(!raw) return null;
+  const txt = raw.includes('\t') ? raw.split('\t')[1] : raw;
+  if(!txt) return null;
+  const trimmed = txt.trim();
+  if(trimmed.length < 4 || trimmed.length > 80) return null;
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).replace(/\.$/,'');
+}
+
+function isSafeCandidate(entry, defText){
+  if((entry.tags||[]).includes('prop')) return false;
+  const lower = defText.toLowerCase();
+  return !UNSAFE_DEF_MARKERS.some(marker => lower.includes(marker));
+}
+
+function tierForLength(len){
+  if(len<=4) return "easy";
+  if(len<=6) return "medium";
+  return "legendary";
+}
+
+/* ============================= EXISTING-BANK PARSING =============================
+   Accepts either a plain word list or a pasted {word:"X", ...} block. */
+function parseExistingBank(raw){
+  const set = new Set();
+  const quoted = raw.match(/word\s*:\s*"([A-Za-z]+)"/g);
+  if(quoted){
+    quoted.forEach(m=>{
+      const w = m.match(/"([A-Za-z]+)"/)[1];
+      set.add(w.toUpperCase());
+    });
+  }
+  raw.split(/[\n,]/).forEach(line=>{
+    const w = line.trim().replace(/[^A-Za-z]/g,'');
+    if(w.length>=3) set.add(w.toUpperCase());
+  });
+  return set;
+}
+
+/* ============================= DATAMUSE FETCH ============================= */
+async function fetchOneSeed(seed, existing, seenSoFar){
+  const url = `https://api.datamuse.com/words?ml=${encodeURIComponent(seed)}&md=d&max=1000`;
+  const controller = new AbortController();
+  const timeout = setTimeout(()=>controller.abort(), 12000);
+  let res;
+  try{
+    res = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+  if(!res.ok) throw new Error('Datamuse request failed: '+res.status);
+  const data = await res.json();
+  const found = [];
+  for(const entry of data){
+    const word = (entry.word||'').toUpperCase();
+    if(!/^[A-Z]{3,13}$/.test(word)) continue;
+    if(existing.has(word)) continue;
+    if(seenSoFar.has(word)) continue;
+    const defs = (entry.defs||[]).map(cleanDatamuseDef).filter(Boolean);
+    if(defs.length===0) continue;
+    const clue = defs[0];
+    if(!isSafeCandidate(entry, clue)) continue;
+    seenSoFar.add(word);
+    found.push({ word, clue, tier:tierForLength(word.length), checked:false });
+  }
+  return found;
+}
+
+async function gatherWords(){
+  const statusEl = document.getElementById('statusLine');
+  const fetchBtn = document.getElementById('fetchBtn');
+  if(activeSeeds.length===0){
+    statusEl.textContent = "Add at least one search term first.";
+    statusEl.className = "status-line err";
+    return;
+  }
+  fetchBtn.disabled = true;
+  const existing = parseExistingBank(document.getElementById('existingBank').value);
+  const seenSoFar = new Set();
+  const all = [];
+  for(let i=0;i<activeSeeds.length;i++){
+    statusEl.textContent = `Searching "${activeSeeds[i]}"… (${i+1}/${activeSeeds.length})`;
+    statusEl.className = "status-line";
+    try{
+      const found = await fetchOneSeed(activeSeeds[i], existing, seenSoFar);
+      all.push(...found);
+    } catch(err){
+      console.error(`Failed on seed "${activeSeeds[i]}":`, err);
+      statusEl.textContent = `Couldn't reach Datamuse for "${activeSeeds[i]}" — check your connection. Continuing with the rest…`;
+      statusEl.className = "status-line err";
+    }
+  }
+  results = all;
+  fetchBtn.disabled = false;
+  if(results.length===0){
+    statusEl.textContent = "No new words found — try different or additional search terms.";
+    statusEl.className = "status-line err";
+    document.getElementById('resultsCard').style.display = 'none';
+    return;
+  }
+  statusEl.textContent = `Found ${results.length} candidate word${results.length===1?'':'s'} across ${activeSeeds.length} search term${activeSeeds.length===1?'':'s'}.`;
+  statusEl.className = "status-line ok";
+  renderResults();
+}
+
+/* ============================= RENDERING ============================= */
+function renderCatList(){
+  const wrap = document.getElementById('catList');
+  wrap.innerHTML = Object.entries(CATEGORIES).map(([key, c])=>`
+    <button class="cat-btn${key===activeCat?' active':''}" data-cat="${key}" style="--cat-color:${c.color}">
+      <span class="swatch"></span>
+      <span class="cn">${c.icon} ${c.label}</span>
+    </button>
+  `).join('');
+  wrap.querySelectorAll('[data-cat]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      activeCat = el.dataset.cat;
+      activeSeeds = [...CATEGORIES[activeCat].seeds];
+      results = [];
+      document.getElementById('resultsCard').style.display = 'none';
+      document.getElementById('exportCard').style.display = 'none';
+      document.getElementById('statusLine').textContent = '';
+      document.getElementById('statusLine').className = 'status-line';
+      renderCatList();
+      renderSeedCard();
+    });
+  });
+}
+
+function renderSeedCard(){
+  const c = CATEGORIES[activeCat];
+  document.getElementById('catIconLabel').textContent = c.icon;
+  document.getElementById('catNameLabel').textContent = c.label;
+  document.getElementById('seedCard').style.setProperty('--cat-color', c.color);
+  const row = document.getElementById('seedRow');
+  row.innerHTML = activeSeeds.map((s,i)=>`
+    <span class="seed-chip">${s}<button data-idx="${i}" title="Remove">✕</button></span>
+  `).join('');
+  row.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      activeSeeds.splice(parseInt(btn.dataset.idx),1);
+      renderSeedCard();
+    });
+  });
+}
+
+function renderResults(){
+  document.getElementById('resultsCard').style.display = 'block';
+  document.getElementById('resultsCard').style.setProperty('--cat-color', CATEGORIES[activeCat].color);
+  const checkedCount = results.filter(r=>r.checked).length;
+  document.getElementById('statsBar').innerHTML = `
+    <div class="stat-pill">Found <b>${results.length}</b></div>
+    <div class="stat-pill">Selected <b id="checkedCount">${checkedCount}</b></div>
+    <div class="stat-pill">Category <b>${CATEGORIES[activeCat].label}</b></div>
+  `;
+  const grid = document.getElementById('resultGrid');
+  if(results.length===0){
+    grid.innerHTML = `<div class="empty-note">No results to show yet.</div>`;
+    return;
+  }
+  grid.innerHTML = results.map((r,i)=>`
+    <label class="word-card${r.checked?' checked':''}" style="--cat-color:${CATEGORIES[activeCat].color}" data-idx="${i}">
+      <input type="checkbox" class="res-check" data-idx="${i}" ${r.checked?'checked':''}>
+      <div class="wc-body">
+        <div class="wc-top">
+          <span class="wc-word">${r.word}</span>
+          <select class="tier-select" data-idx="${i}">
+            <option value="easy"${r.tier==='easy'?' selected':''}>easy</option>
+            <option value="medium"${r.tier==='medium'?' selected':''}>medium</option>
+            <option value="legendary"${r.tier==='legendary'?' selected':''}>legendary</option>
+          </select>
+        </div>
+        <input type="text" class="res-clue" data-idx="${i}" value="${r.clue.replace(/"/g,'&quot;')}">
+      </div>
+    </label>
+  `).join('');
+
+  grid.querySelectorAll('.res-check').forEach(chk=>{
+    chk.addEventListener('change', ()=>{
+      const idx = parseInt(chk.dataset.idx);
+      results[idx].checked = chk.checked;
+      chk.closest('.word-card').classList.toggle('checked', chk.checked);
+      document.getElementById('checkedCount').textContent = results.filter(r=>r.checked).length;
+    });
+  });
+  grid.querySelectorAll('.tier-select').forEach(sel=>{
+    sel.addEventListener('change', ()=>{
+      results[parseInt(sel.dataset.idx)].tier = sel.value;
+    });
+  });
+  grid.querySelectorAll('.res-clue').forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      results[parseInt(inp.dataset.idx)].clue = inp.value;
+    });
+  });
+}
+
+/* ============================= EXPORT ============================= */
+function buildExportBlock(){
+  const chosen = results.filter(r=>r.checked && r.clue.trim());
+  const lines = chosen.map(r=>
+    `      {word:"${r.word}", tier:"${r.tier}", clue:"${r.clue.trim().replace(/"/g,'\\"')}"},`
+  );
+  return lines.join('\n');
+}
+
+/* ============================= EVENTS ============================= */
+document.getElementById('addSeedBtn').addEventListener('click', ()=>{
+  const inp = document.getElementById('seedInput');
+  const val = inp.value.trim().toLowerCase();
+  if(val && !activeSeeds.includes(val)){
+    activeSeeds.push(val);
+    inp.value = '';
+    renderSeedCard();
+  }
+});
+document.getElementById('seedInput').addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('addSeedBtn').click(); }
+});
+document.getElementById('resetSeedsBtn').addEventListener('click', ()=>{
+  activeSeeds = [...CATEGORIES[activeCat].seeds];
+  renderSeedCard();
+});
+document.getElementById('fetchBtn').addEventListener('click', gatherWords);
+document.getElementById('selAllBtn').addEventListener('click', ()=>{
+  results.forEach(r=> r.checked = true);
+  renderResults();
+});
+document.getElementById('selNoneBtn').addEventListener('click', ()=>{
+  results.forEach(r=> r.checked = false);
+  renderResults();
+});
+document.getElementById('exportBtn').addEventListener('click', ()=>{
+  const block = buildExportBlock();
+  const exportCard = document.getElementById('exportCard');
+  const out = document.getElementById('exportOut');
+  if(!block){
+    out.value = "No words selected — check the ones you'd like to export first.";
+  } else {
+    out.value = block;
+  }
+  exportCard.style.display = 'block';
+  exportCard.scrollIntoView({behavior:'smooth', block:'start'});
+});
+document.getElementById('copyBtn').addEventListener('click', async ()=>{
+  const out = document.getElementById('exportOut');
+  try{
+    await navigator.clipboard.writeText(out.value);
+    const btn = document.getElementById('copyBtn');
+    const original = btn.textContent;
+    btn.textContent = 'Copied ✓';
+    setTimeout(()=> btn.textContent = original, 1500);
+  } catch(err){
+    out.select();
+    document.execCommand('copy');
+  }
+});
+document.getElementById('downloadBtn').addEventListener('click', ()=>{
+  const out = document.getElementById('exportOut').value;
+  const blob = new Blob([out], {type:'text/plain'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${activeCat}-word-bank.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+/* ============================= INIT ============================= */
+renderCatList();
+renderSeedCard();
+</script>
+</body>
+</html>
