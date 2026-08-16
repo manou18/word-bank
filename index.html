@@ -639,6 +639,7 @@
         function tierForLength(len) {
             if (len <= 4) return "easy";
             if (len <= 6) return "medium";
+            if (len <= 9) return "hard";
             return "legendary";
         }
 
@@ -796,6 +797,7 @@
                   <select class="tier-select" data-idx="${i}">
                     <option value="easy"${r.tier === 'easy' ? ' selected' : ''}>easy</option>
                     <option value="medium"${r.tier === 'medium' ? ' selected' : ''}>medium</option>
+                    <option value="hard"${r.tier === 'hard' ? ' selected' : ''}>hard</option>
                     <option value="legendary"${r.tier === 'legendary' ? ' selected' : ''}>legendary</option>
                   </select>
                 </div>
