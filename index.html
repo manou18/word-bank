@@ -633,6 +633,7 @@
                     <span>Verify with a free dictionary API after gathering (slower, catches non-words &amp; strengthens relevance)</span>
                 </label>
                 <div class="status-line" id="statusLine"></div>
+                <button class="btn small ghost" id="skipDictBtn" style="display:none;margin-top:6px;">Skip verification, use results as-is</button>
             </section>
 
             <section class="card" id="resultsCard" style="display:none;">
@@ -1011,10 +1012,13 @@
         // false negatives there. A 404 is only used to drop a word when Datamuse's own clue for it had
         // no domain tag either — i.e. neither source could vouch for it.
         const DICT_API_BASE = 'https://api.dictionaryapi.dev/api/v2/entries/en/';
+        const DICT_LOOKUP_TIMEOUT_MS = 4000; // a hung request must not be able to stall the whole pass
 
         async function lookupFreeDictionary(word) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), DICT_LOOKUP_TIMEOUT_MS);
             try {
-                const res = await fetch(DICT_API_BASE + encodeURIComponent(word.toLowerCase()));
+                const res = await fetch(DICT_API_BASE + encodeURIComponent(word.toLowerCase()), { signal: controller.signal });
                 if (res.status === 404) return { found: false, defs: [] };
                 if (!res.ok) return { found: null, defs: [] }; // unknown status — don't penalize the word
                 const data = await res.json();
@@ -1024,7 +1028,9 @@
                 });
                 return { found: true, defs };
             } catch (_) {
-                return { found: null, defs: [] }; // network/CORS hiccup — don't penalize the word
+                return { found: null, defs: [] }; // network/CORS/timeout hiccup — don't penalize the word
+            } finally {
+                clearTimeout(timer);
             }
         }
 
@@ -1033,12 +1039,15 @@
         //   r._dictReject     → true if it should be dropped (not found anywhere, and untrusted already)
         //   r._dictConfirmed  → true if a dictionary definition also matched the theme (nice-to-have
         //                        signal, surfaced as a small badge, not currently used to auto-keep)
-        async function verifyCandidatesWithDictionary(candidates, cat, keywords, onProgress) {
-            const CONCURRENCY = 5;
+        // `shouldCancel()` is polled between lookups so a user-triggered skip takes effect quickly
+        // instead of waiting for every in-flight and queued request to finish.
+        async function verifyCandidatesWithDictionary(candidates, cat, keywords, onProgress, shouldCancel) {
+            const CONCURRENCY = 8;
             let nextIdx = 0;
             let done = 0;
             async function worker() {
                 while (nextIdx < candidates.length) {
+                    if (shouldCancel && shouldCancel()) return;
                     const idx = nextIdx++;
                     const r = candidates[idx];
                     const hadDomainTag = defDomainTags(r.clue).length > 0;
@@ -1094,14 +1103,30 @@
                 fetchBtn.disabled = true;
                 const cat = CATEGORIES[activeCat];
                 const keywords = categoryKeywords(cat);
+
+                let cancelled = false;
+                const skipBtn = document.getElementById('skipDictBtn');
+                const onSkipClick = () => { cancelled = true; };
+                skipBtn.style.display = '';
+                skipBtn.addEventListener('click', onSkipClick);
+
+                const etaSec = Math.ceil(results.length / 8 * 0.5); // rough: 8 in flight, ~0.5s/lookup avg
+                statusEl.textContent = `Verifying ${results.length} word(s) with a free dictionary… (~${etaSec}s, or click Skip below)`;
+                statusEl.className = "status-line";
+
                 try {
                     await verifyCandidatesWithDictionary(results, cat, keywords, (done, total) => {
-                        statusEl.textContent = `Verifying with free dictionary… (${done}/${total})`;
+                        if (cancelled) return;
+                        statusEl.textContent = `Verifying with free dictionary… (${done}/${total}) — click Skip to stop and keep current results`;
                         statusEl.className = "status-line";
-                    });
+                    }, () => cancelled);
                 } catch (err) {
                     console.error('Dictionary verification failed:', err);
                 }
+
+                skipBtn.removeEventListener('click', onSkipClick);
+                skipBtn.style.display = 'none';
+
                 const before = results.length;
                 results = results.filter(r => !r._dictReject);
                 const removedByDict = before - results.length;
@@ -1114,7 +1139,8 @@
                 }
                 statusEl.textContent =
                     `Found ${results.length} candidate word${results.length === 1 ? '' : 's'} across ${activeSeeds.length} search term${activeSeeds.length === 1 ? '' : 's'}` +
-                    (removedByDict > 0 ? ` (dictionary check dropped ${removedByDict} that weren't real standalone words).` : '.');
+                    (cancelled ? ' (verification skipped partway — not every word was checked).' :
+                        (removedByDict > 0 ? ` (dictionary check dropped ${removedByDict} that weren't real standalone words).` : '.'));
                 statusEl.className = "status-line ok";
                 renderResults();
                 renderSeedAnalysis();
