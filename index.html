@@ -1134,10 +1134,12 @@
 
         async function rescueNearMissesWithConceptNet(nearMisses, cat, onProgress, shouldCancel) {
             const anchors = conceptAnchors(cat);
-            if (anchors.length === 0) return [];
+            if (anchors.length === 0) return { rescued: [], reachable: null };
             const CONCURRENCY = 6;
             let nextIdx = 0;
             let done = 0;
+            let successfulLookups = 0; // any lookup that got a real number back, rescued or not
+            let attemptedLookups = 0;
             const rescued = [];
             async function worker() {
                 while (nextIdx < nearMisses.length) {
@@ -1146,8 +1148,12 @@
                     const r = nearMisses[idx];
                     let bestScore = -1;
                     for (const anchor of anchors) {
+                        attemptedLookups++;
                         const score = await conceptNetRelatedness(r.word, anchor);
-                        if (typeof score === 'number' && score > bestScore) bestScore = score;
+                        if (typeof score === 'number') {
+                            successfulLookups++;
+                            if (score > bestScore) bestScore = score;
+                        }
                     }
                     if (bestScore >= CONCEPTNET_THRESHOLD) {
                         r._conceptRescued = true;
@@ -1159,7 +1165,12 @@
                 }
             }
             await Promise.all(Array.from({ length: Math.min(CONCURRENCY, nearMisses.length) }, worker));
-            return rescued;
+            // If literally nothing came back across every attempt, the API itself is almost certainly
+            // unreachable from here (network block, CORS, or an outage) rather than every word just
+            // being unrelated — that distinction matters so the caller can tell the user what happened
+            // instead of silently reporting "0 rescued" as if the check ran fine.
+            const reachable = attemptedLookups === 0 ? null : successfulLookups > 0;
+            return { rescued, reachable };
         }
 
         async function gatherWords() {
@@ -1205,6 +1216,7 @@
 
             const cat = CATEGORIES[activeCat];
             let rescuedCount = 0;
+            let conceptUnreachable = false;
 
             // Stage 1: ConceptNet rescue. Runs on words the lexical check passed over — no keyword/
             // stem/domain-tag hit — so this is purely trying to *recover* good words the first pass
@@ -1221,15 +1233,17 @@
                 statusEl.textContent = `Checking ${allNearMisses.length} near-miss word(s) against ConceptNet for semantic relatedness…`;
                 statusEl.className = "status-line";
                 try {
-                    const rescued = await rescueNearMissesWithConceptNet(allNearMisses, cat, (done, total) => {
+                    const { rescued, reachable } = await rescueNearMissesWithConceptNet(allNearMisses, cat, (done, total) => {
                         if (cancelled) return;
                         statusEl.textContent = `Checking relatedness… (${done}/${total}) — click Skip to stop`;
                         statusEl.className = "status-line";
                     }, () => cancelled);
                     rescuedCount = rescued.length;
+                    conceptUnreachable = reachable === false;
                     results = results.concat(rescued);
                 } catch (err) {
                     console.error('ConceptNet rescue failed:', err);
+                    conceptUnreachable = true;
                 }
                 skipBtn.removeEventListener('click', onSkipClick);
                 skipBtn.style.display = 'none';
@@ -1287,13 +1301,14 @@
             }
 
             const notes = [];
-            if (rescuedCount > 0) notes.push(`ConceptNet rescued ${rescuedCount} near-miss word${rescuedCount === 1 ? '' : 's'}`);
+            if (conceptUnreachable) notes.push("couldn't reach ConceptNet (blocked, rate-limited, or down) — no near-misses could be checked");
+            else if (rescuedCount > 0) notes.push(`ConceptNet rescued ${rescuedCount} near-miss word${rescuedCount === 1 ? '' : 's'}`);
             if (removedByDict > 0) notes.push(`dictionary check dropped ${removedByDict} that weren't real standalone words`);
             if (dictCancelled) notes.push('dictionary check skipped partway — not every word was verified');
             statusEl.textContent =
                 `Found ${results.length} candidate word${results.length === 1 ? '' : 's'} across ${activeSeeds.length} search term${activeSeeds.length === 1 ? '' : 's'}` +
                 (notes.length ? ` (${notes.join('; ')}).` : '.');
-            statusEl.className = "status-line ok";
+            statusEl.className = conceptUnreachable ? "status-line err" : "status-line ok";
             renderResults();
             renderSeedAnalysis();
         }
