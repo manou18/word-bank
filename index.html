@@ -753,7 +753,21 @@
                 ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
                     "card games", "anatomy", "zoology", "medicine", "pathology", "mathematics", "geometry",
                     "nautical", "ophthalmology", "organic chemistry", "science fiction"
-                ] },
+                ],
+                // Substring roots (not whole-word) for this category — lets the relevance check catch
+                // compounds and derived forms (STARBURST, MOONLIT, ASTROLOGER…) that the seed-derived
+                // whole-word keyword list alone would miss. Kept separate from `seeds` because these are
+                // deliberately partial fragments, not search terms to send to Datamuse.
+                themeStems: ["star", "light", "lum", "phot", "astro", "cosm", "nova", "sol", "lun", "sun", "moon",
+                    "sky", "night", "dark", "glow", "shin", "radia", "glitter", "twilight", "dawn", "dusk",
+                    "celest", "nebula", "comet", "planet", "galax", "constellat", "meteor", "eclipse", "aurora",
+                    "orbit", "gravit", "stellar", "pulsar", "quasar", "redshift", "parallax", "zodiac",
+                    "equinox", "solstice", "eclipt", "meridian", "azimuth", "telescop", "cosmolog", "astrophys",
+                    "astronaut", "astronom", "satellite", "cosmonaut", "sidereal", "astrolog", "horoscop",
+                    "tarot", "fortune", "fate", "omen", "portent", "prophec", "divinat", "oracle", "occult",
+                    "mystic", "mancy", "mantic", "auspic", "saturnine", "jovial", "mercur", "benignant",
+                    "malignant", "scope", "lens", "prism", "binocul", "magnif", "aperture", "optic"]
+                },
         };
 
         let activeCat = "metals";
@@ -829,18 +843,29 @@
         const SOFT_OFF_TAGS = ["informal", "slang", "colloquial", "figuratively", "chiefly informal",
             "childish", "dated", "euphemistic", "derogatory", "vulgar", "text messaging"];
 
+        // Whole-word keyword hit (from seeds/label) OR a substring hit against the category's
+        // curated themeStems (compounds like STARBURST won't match the whole-word "star" keyword
+        // since "star" itself is too short/generic to add as a keyword, but it *will* match the
+        // "star" stem). Categories without themeStems just fall back to the keyword-only check,
+        // so this is a strict superset of the old behavior.
+        function wordMatchesTheme(word, clue, cat, keywords) {
+            const haystack = (word + ' ' + clue).toLowerCase();
+            for (const kw of keywords) {
+                if (new RegExp('\\b' + kw + '\\b').test(haystack)) return true;
+            }
+            const stems = cat.themeStems || [];
+            for (const stem of stems) {
+                if (haystack.includes(stem)) return true;
+            }
+            return false;
+        }
+
         function autoScoreWord(r, cat, keywords) {
             const tags = defDomainTags(r.clue);
             const avoidHit = tags.some(tag => (cat.avoidDomains || []).some(avoid => tag.includes(avoid)));
             if (avoidHit) return 'rejected';
 
-            const haystack = (r.word + ' ' + r.clue).toLowerCase();
-            let hit = false;
-            for (const kw of keywords) {
-                // require a whole-word-ish match to cut down on false positives (e.g. "ore" inside "before")
-                if (new RegExp('\\b' + kw + '\\b').test(haystack)) { hit = true; break; }
-            }
-            if (hit) return 'kept';
+            if (wordMatchesTheme(r.word, r.clue, cat, keywords)) return 'kept';
 
             const softOffHit = tags.some(tag => SOFT_OFF_TAGS.some(soft => tag.includes(soft)));
             if (softOffHit) return 'rejected'; // no domain keyword rescued it — likely a figurative/slang sense
@@ -908,7 +933,9 @@
             }
             if (!res.ok) throw new Error('Datamuse request failed: ' + res.status);
             const data = await res.json();
-            const avoidDomains = (CATEGORIES[activeCat] && CATEGORIES[activeCat].avoidDomains) || [];
+            const cat = CATEGORIES[activeCat] || {};
+            const avoidDomains = cat.avoidDomains || [];
+            const keywords = categoryKeywords(cat);
             const found = [];
             for (const entry of data) {
                 const word = (entry.word || '').toUpperCase();
@@ -921,7 +948,21 @@
                 // is off-domain, drop the word entirely instead of keeping a bad clue.
                 const onDomainDefs = allDefs.filter(d => !isDefDomainAvoided(d, avoidDomains));
                 if (onDomainDefs.length === 0) continue;
-                const clue = onDomainDefs[0];
+                // Among the remaining senses, prefer one that's actually on-theme (matches a
+                // keyword/stem, or carries a domain tag that isn't in avoidDomains — a tagged
+                // sense like "(astronomy)" is trusted even without a literal keyword hit).
+                // This is the key fix: definitions with NO domain tag at all used to be kept
+                // by default just for surviving the avoid-list, which is how unrelated words
+                // with plain untagged senses (e.g. "a friend, buddy") slipped through. Now an
+                // untagged (or informal/slang/childish-tagged) sense must also hit the theme
+                // check, or the word is dropped instead of pending review.
+                let clue = null;
+                for (const d of onDomainDefs) {
+                    const tags = defDomainTags(d);
+                    const hasUsableTag = tags.length > 0 && !tags.some(t => SOFT_OFF_TAGS.some(s => t.includes(s)));
+                    if (hasUsableTag || wordMatchesTheme(word, d, cat, keywords)) { clue = d; break; }
+                }
+                if (!clue) continue;
                 if (!isSafeCandidate(entry, clue)) continue;
                 seenSoFar.add(word);
                 found.push({ word, clue, tier: tierForLength(word.length), status: 'pending', sourceSeed: seed });
