@@ -456,6 +456,7 @@
             background: #9b7fc4;
             border-radius: 5px;
             padding: 1px 5px;
+            cursor: help;
         }
 
         .wc-dict {
@@ -473,6 +474,12 @@
             border-radius: 5px;
             padding: 1px 5px;
             cursor: default;
+        }
+
+        .wc-reason {
+            font-size: 11px;
+            cursor: help;
+            color: #6b73a0;
         }
 
         .dict-verify-toggle {
@@ -593,6 +600,20 @@
             margin-top: 10px;
         }
 
+        .info-box {
+            background: #232a52;
+            border: 1px solid #2e3660;
+            border-radius: 9px;
+            padding: 12px 14px;
+            margin: 10px 0 6px;
+            font-size: 12px;
+            color: #a9b0d4;
+            line-height: 1.6;
+        }
+        .info-box strong {
+            color: #f1ecdd;
+        }
+
         footer {
             text-align: center;
             color: #6b73a0;
@@ -661,11 +682,20 @@
                         <button class="btn small" id="selAllBtn">Keep all</button>
                         <button class="btn small" id="selNoneBtn">Clear all</button>
                         <button class="btn small" id="autoReviewBtn">Auto-review ✨</button>
+                        <button class="btn small" id="clearAutoBtn">Clear Auto</button>
                         <button class="btn small" id="seedAnalysisBtn">Seed analysis ▾</button>
                     </div>
                     <div class="btn-row">
                         <button class="btn small gold" id="exportBtn">Export selected →</button>
                     </div>
+                </div>
+                <!-- info box about auto-review criteria -->
+                <div class="info-box" id="autoInfo" style="display:none;">
+                    <strong>Auto‑review criteria:</strong> 
+                    Relevance score based on keyword/stem matches, morphological relations (prefixes/suffixes), relational phrases in definitions (e.g., "related to [category]"), strong phrases ("used for", "made of"), close spelling (Levenshtein ≤1 for words ≤5 letters, ≤2 for longer), and domain tags. 
+                    Scientific domains (<code>biology, chemistry, physics…</code>) are trusted <strong>only if not</strong> in the category's <code>avoidDomains</code>. 
+                    Words scoring ≥2 are <span style="color:#7fa876;">kept</span>, ≤‑1 are <span style="color:#c1583f;">rejected</span>, others stay <span style="color:#a9b0d4;">pending</span>. 
+                    Hover the ℹ️ icon to see the exact reason and score.
                 </div>
                 <div class="seed-analysis" id="seedAnalysis" style="display:none;"></div>
                 <div class="result-grid" id="resultGrid"></div>
@@ -815,7 +845,7 @@
 
         let activeCat = "metals";
         let activeSeeds = [...CATEGORIES[activeCat].seeds];
-        let results = []; // {word, clue, tier, status: 'pending'|'kept'|'rejected', sourceSeed}
+        let results = []; // {word, clue, tier, status: 'pending'|'kept'|'rejected', sourceSeed, autoDecided, _decisionReason, _relevanceScore}
 
         /* ============================= SAFETY FILTERS ============================= */
         const UNSAFE_DEF_MARKERS = [
@@ -841,10 +871,6 @@
         }
 
         /* ============================= DOMAIN-DRIFT FILTER ============================= */
-        // Wiktionary/Datamuse definitions often lead with a domain tag, e.g. "(nautical) ...".
-        // A category can list domains that are never relevant to it (avoidDomains); any
-        // definition tagged with one of those is skipped in favor of another sense of the
-        // same word, or the word is dropped entirely if every sense is off-domain.
         function defDomainTags(defText) {
             const m = defText.match(/^\(([^)]+)\)/);
             if (!m) return [];
@@ -857,9 +883,7 @@
             return tags.some(tag => avoidDomains.some(avoid => tag.includes(avoid)));
         }
 
-        /* ============================= HEURISTIC AUTO-REVIEW ============================= */
-        // No external API — this is a local, transparent, imperfect keyword heuristic meant
-        // to pre-sort the obvious cases so a human only has to review the ambiguous middle.
+        /* ============================= ENHANCED AUTO-REVIEW WITH SCORING ============================= */
         const STOPWORDS = new Set(["a","an","the","of","in","on","at","to","for","and","or",
             "with","by","is","are","was","were","be","been","its","it's","this","that","as",
             "such","body","related"]);
@@ -879,18 +903,11 @@
             return words;
         }
 
-        // These tags alone don't conflict with any specific category (so they're not part of
-        // avoidDomains), but a definition carrying one AND matching no domain keyword is very
-        // reliably noise — this is the "figurative/colloquial sense" pattern that slips past
-        // the hard avoidDomains check (e.g. "(informal) Someone remarkably skilled").
         const SOFT_OFF_TAGS = ["informal", "slang", "colloquial", "figuratively", "chiefly informal",
             "childish", "dated", "euphemistic", "derogatory", "vulgar", "text messaging"];
 
-        // Whole-word keyword hit (from seeds/label) OR a substring hit against the category's
-        // curated themeStems (compounds like STARBURST won't match the whole-word "star" keyword
-        // since "star" itself is too short/generic to add as a keyword, but it *will* match the
-        // "star" stem). Categories without themeStems just fall back to the keyword-only check,
-        // so this is a strict superset of the old behavior.
+        const SCIENCE_DOMAINS = ['biology', 'chemistry', 'physics', 'astronomy', 'geology', 'botany', 'zoology', 'ecology', 'meteorology', 'oceanography'];
+
         function wordMatchesTheme(word, clue, cat, keywords) {
             const haystack = (word + ' ' + clue).toLowerCase();
             for (const kw of keywords) {
@@ -903,17 +920,169 @@
             return false;
         }
 
-        function autoScoreWord(r, cat, keywords) {
+        const GENERIC_WORDS = new Set(['thing', 'object', 'item', 'stuff', 'something', 'anything', 'everything', 'one', 'person', 'people', 'man', 'woman']);
+
+        function levenshteinDistance(a, b) {
+            const m = a.length, n = b.length;
+            const dp = Array.from({ length: m + 1 }, (_, i) => Array(n + 1).fill(0));
+            for (let i = 0; i <= m; i++) dp[i][0] = i;
+            for (let j = 0; j <= n; j++) dp[0][j] = j;
+            for (let i = 1; i <= m; i++) {
+                for (let j = 1; j <= n; j++) {
+                    dp[i][j] = Math.min(
+                        dp[i-1][j] + 1,
+                        dp[i][j-1] + 1,
+                        dp[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1)
+                    );
+                }
+            }
+            return dp[m][n];
+        }
+
+        function hasMorphologicalRelation(word, keywords) {
+            const lower = word.toLowerCase();
+            const suffixPatterns = ['ing', 'ed', 'er', 'or', 'tion', 'ness', 'ment', 'able', 'ible', 'ous', 'al', 'ial', 'ic', 'ical', 'ive', 'ative', 'itive', 'ful', 'less', 'ly', 'ity'];
+            const prefixPatterns = ['un', 're', 'pre', 'post', 'anti', 'co', 'dis', 'mis', 'over', 'under'];
+
+            for (const suffix of suffixPatterns) {
+                if (lower.endsWith(suffix)) {
+                    const stem = lower.slice(0, -suffix.length);
+                    if (stem.length >= 3) {
+                        for (const kw of keywords) {
+                            if (kw === stem || kw.startsWith(stem) || stem.startsWith(kw)) return true;
+                        }
+                    }
+                }
+            }
+            for (const prefix of prefixPatterns) {
+                if (lower.startsWith(prefix)) {
+                    const stem = lower.slice(prefix.length);
+                    if (stem.length >= 3) {
+                        for (const kw of keywords) {
+                            if (kw === stem || kw.startsWith(stem) || stem.startsWith(kw)) return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        const RELATIONAL_PHRASES = ['related to', 'pertaining to', 'of or relating to', 'used in', 'associated with', 'in the context of', 'concerned with', 'dealing with'];
+        const STRONG_PHRASES = ['used for', 'made of', 'consisting of', 'characteristic of', 'a type of', 'a kind of'];
+
+        function definitionHasRelationalPhrase(clue, catLabel, strong = false) {
+            const phrases = strong ? STRONG_PHRASES : RELATIONAL_PHRASES;
+            const lower = clue.toLowerCase();
+            const catWords = catLabel.toLowerCase().split(/\s+/).filter(w => w.length > 2 && w !== '&');
+            for (const phrase of phrases) {
+                const idx = lower.indexOf(phrase);
+                if (idx !== -1) {
+                    const after = lower.slice(idx + phrase.length).trim().split(/\s+/);
+                    for (const word of catWords) {
+                        if (after.some(a => a.includes(word) || word.includes(a))) return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // ----- MODIFIED: Levenshtein threshold depends on word length -----
+        function hasCloseMatch(word, keywords) {
+            const lower = word.toLowerCase();
+            const len = lower.length;
+            const threshold = len <= 5 ? 1 : 2;  // ≤5 letters → ≤1, otherwise ≤2
+            for (const kw of keywords) {
+                if (levenshteinDistance(lower, kw) <= threshold) return true;
+            }
+            return false;
+        }
+
+        // ----- MODIFIED: science bonus only if domain not in avoidDomains -----
+        function scoreWord(r, cat, keywords) {
+            let score = 0;
+            let reasons = [];
+
+            // 1. Generic words → strong negative
+            if (GENERIC_WORDS.has(r.word.toLowerCase())) {
+                return { verdict: 'rejected', reason: 'Generic word', score: -10 };
+            }
+
+            // 2. Theme match (keywords or stems)
+            if (wordMatchesTheme(r.word, r.clue, cat, keywords)) {
+                score += 3;
+                reasons.push('theme match');
+            }
+
+            // 3. Morphological relation
+            if (hasMorphologicalRelation(r.word, keywords)) {
+                score += 2;
+                reasons.push('morphological');
+            }
+
+            // 4. Relational phrase (normal)
+            if (definitionHasRelationalPhrase(r.clue, cat.label, false)) {
+                score += 2;
+                reasons.push('relational phrase');
+            }
+
+            // 5. Strong phrase
+            if (definitionHasRelationalPhrase(r.clue, cat.label, true)) {
+                score += 3;
+                reasons.push('strong phrase');
+            }
+
+            // 6. Close match (Levenshtein) - now threshold depends on length
+            if (hasCloseMatch(r.word, keywords)) {
+                score += 1;
+                reasons.push('close spelling');
+            }
+
+            // 7. Domain tags (avoidance) and science bonus
             const tags = defDomainTags(r.clue);
-            const avoidHit = tags.some(tag => (cat.avoidDomains || []).some(avoid => tag.includes(avoid)));
-            if (avoidHit) return 'rejected';
+            const avoidDomains = cat.avoidDomains || [];
+            let hasAvoid = false;
+            // Check if any tag is in avoidDomains
+            if (tags.some(tag => avoidDomains.some(avoid => tag.includes(avoid)))) {
+                score -= 3;
+                hasAvoid = true;
+                reasons.push('avoided domain');
+            }
 
-            if (wordMatchesTheme(r.word, r.clue, cat, keywords)) return 'kept';
+            // 8. Soft off tags (if no other positive signals)
+            if (tags.some(tag => SOFT_OFF_TAGS.some(soft => tag.includes(soft)))) {
+                if (score < 2) {
+                    score -= 2;
+                    reasons.push('soft off-tag');
+                }
+            }
 
-            const softOffHit = tags.some(tag => SOFT_OFF_TAGS.some(soft => tag.includes(soft)));
-            if (softOffHit) return 'rejected'; // no domain keyword rescued it — likely a figurative/slang sense
+            // 9. Science domains bonus — ONLY if the tag is NOT in avoidDomains
+            const scienceHit = tags.some(tag => SCIENCE_DOMAINS.some(sci => tag.includes(sci)));
+            if (scienceHit) {
+                // Check if any science tag is also in avoidDomains — if so, skip bonus
+                const hasAvoidScience = tags.some(tag =>
+                    avoidDomains.some(avoid => tag.includes(avoid)) &&
+                    SCIENCE_DOMAINS.some(sci => tag.includes(sci))
+                );
+                if (!hasAvoidScience) {
+                    score += 2;
+                    reasons.push('science domain');
+                }
+            }
 
-            return null; // not confident either way — stays pending
+            // 10. Safety: if unsafe, reject outright
+            if (!isSafeCandidate({ tags: [] }, r.clue)) {
+                return { verdict: 'rejected', reason: 'unsafe content', score: -10 };
+            }
+
+            // Decision
+            let verdict = null;
+            if (score >= 2) verdict = 'kept';
+            else if (score <= -1) verdict = 'rejected';
+            else verdict = null;
+
+            const reason = reasons.length ? reasons.join(', ') : 'no strong signals';
+            return { verdict, reason, score };
         }
 
         function runAutoReview() {
@@ -921,12 +1090,17 @@
             const keywords = categoryKeywords(cat);
             let decided = 0;
             results.forEach(r => {
-                if (r.status !== 'pending') return; // never overwrite a human decision
-                const verdict = autoScoreWord(r, cat, keywords);
+                if (r.status !== 'pending') return;
+                const { verdict, reason, score } = scoreWord(r, cat, keywords);
                 if (verdict) {
                     r.status = verdict;
                     r.autoDecided = true;
+                    r._decisionReason = reason;
+                    r._relevanceScore = score;
                     decided++;
+                } else {
+                    r._decisionReason = reason + ` (score ${score})`;
+                    r._relevanceScore = score;
                 }
             });
             renderResults();
@@ -936,6 +1110,7 @@
                 ? `Auto-review marked ${decided} word${decided === 1 ? '' : 's'} — check the AUTO-tagged cards and adjust any it got wrong.`
                 : `Auto-review didn't find any confident matches among the pending words — review manually.`;
             statusEl.className = 'status-line ok';
+            document.getElementById('autoInfo').style.display = 'block';
         }
 
         function tierForLength(len) {
@@ -980,7 +1155,7 @@
             const avoidDomains = cat.avoidDomains || [];
             const keywords = categoryKeywords(cat);
             const found = [];
-            const nearMisses = []; // passed avoidDomains but no keyword/stem/tag hit — candidates for the association rescue pass
+            const nearMisses = [];
             for (const entry of data) {
                 const word = (entry.word || '').toUpperCase();
                 if (!/^[A-Z]{3,13}$/.test(word)) continue;
@@ -988,29 +1163,18 @@
                 if (seenSoFar.has(word)) continue;
                 const allDefs = (entry.defs || []).map(cleanDatamuseDef).filter(Boolean);
                 if (allDefs.length === 0) continue;
-                // Prefer a sense that isn't on the category's avoid-list; if every sense
-                // is off-domain, drop the word entirely instead of keeping a bad clue.
+                // Exclude definitions that have avoided domains
                 const onDomainDefs = allDefs.filter(d => !isDefDomainAvoided(d, avoidDomains));
                 if (onDomainDefs.length === 0) continue;
-                // Among the remaining senses, prefer one that's actually on-theme (matches a
-                // keyword/stem, or carries a domain tag that isn't in avoidDomains — a tagged
-                // sense like "(astronomy)" is trusted even without a literal keyword hit).
-                // This is the key fix: definitions with NO domain tag at all used to be kept
-                // by default just for surviving the avoid-list, which is how unrelated words
-                // with plain untagged senses (e.g. "a friend, buddy") slipped through. Now an
-                // untagged (or informal/slang/childish-tagged) sense must also hit the theme
-                // check, or the word is dropped instead of pending review.
                 let clue = null;
                 for (const d of onDomainDefs) {
                     const tags = defDomainTags(d);
                     const hasUsableTag = tags.length > 0 && !tags.some(t => SOFT_OFF_TAGS.some(s => t.includes(s)));
-                    if (hasUsableTag || wordMatchesTheme(word, d, cat, keywords)) { clue = d; break; }
+                    // Science domains are trusted only if not in avoidDomains (already filtered out)
+                    const isScience = tags.some(t => SCIENCE_DOMAINS.some(sci => t.includes(sci)));
+                    if (hasUsableTag || isScience || wordMatchesTheme(word, d, cat, keywords)) { clue = d; break; }
                 }
                 if (!clue) {
-                    // No literal keyword/stem/tag match — but that's a lexical test, and plenty of
-                    // genuinely on-topic words (FILAMENT for nebulae, CHILL for a clear night) just
-                    // don't happen to repeat a seed word. Keep it as a near-miss instead of dropping
-                    // outright, so the association rescue pass can check *semantic* relatedness afterward.
                     if (!isSafeCandidate(entry, onDomainDefs[0])) continue;
                     nearMisses.push({ word, clue: onDomainDefs[0], tier: tierForLength(word.length), status: 'pending', sourceSeed: seed });
                     continue;
@@ -1023,24 +1187,8 @@
         }
 
         /* ============================= FREE DICTIONARY VERIFICATION ============================= */
-        // Optional second pass against api.dictionaryapi.dev (free, keyless, CORS-enabled — built on
-        // Wiktionary data, same as Datamuse's `md=d` defs, but queried per-word so it acts as an
-        // independent check rather than trusting Datamuse's own definition blindly).
-        //
-        // What it's for:
-        //  - Catching words that aren't real standalone dictionary entries (Datamuse's `ml=` endpoint
-        //    can return inflections, fragments, or near-misses that only exist as part of another word).
-        //  - Cross-checking theme relevance against a second, independently-worded definition.
-        //
-        // What it deliberately does NOT do: hard-reject a word just because dictionaryapi.dev doesn't
-        // have it. That dataset skews toward common vocabulary, so obscure "legendary"-tier scientific
-        // terms (the kind Wiktionary/Datamuse carries but a smaller dictionary might not) are common
-        // false negatives there. A 404 is only used to drop a word when Datamuse's own clue for it was
-        // *not* already lexically trusted — i.e. it had no domain tag AND no literal keyword/stem hit,
-        // meaning it only got in via the weaker association-rescue (semantic) pass and neither source
-        // could vouch for it lexically.
         const DICT_API_BASE = 'https://api.dictionaryapi.dev/api/v2/entries/en/';
-        const DICT_LOOKUP_TIMEOUT_MS = 4000; // a hung request must not be able to stall the whole pass
+        const DICT_LOOKUP_TIMEOUT_MS = 4000;
 
         async function lookupFreeDictionary(word) {
             const controller = new AbortController();
@@ -1048,7 +1196,7 @@
             try {
                 const res = await fetch(DICT_API_BASE + encodeURIComponent(word.toLowerCase()), { signal: controller.signal });
                 if (res.status === 404) return { found: false, defs: [] };
-                if (!res.ok) return { found: null, defs: [] }; // unknown status — don't penalize the word
+                if (!res.ok) return { found: null, defs: [] };
                 const data = await res.json();
                 const defs = [];
                 (data[0] && data[0].meanings || []).forEach(m => {
@@ -1056,19 +1204,12 @@
                 });
                 return { found: true, defs };
             } catch (_) {
-                return { found: null, defs: [] }; // network/CORS/timeout hiccup — don't penalize the word
+                return { found: null, defs: [] };
             } finally {
                 clearTimeout(timer);
             }
         }
 
-        // Runs lookups with limited concurrency (the API is free/keyless, so this is polite as much
-        // as it is practical) and mutates each candidate in place:
-        //   r._dictReject     → true if it should be dropped (not found anywhere, and untrusted already)
-        //   r._dictConfirmed  → true if a dictionary definition also matched the theme (nice-to-have
-        //                        signal, surfaced as a small badge, not currently used to auto-keep)
-        // `shouldCancel()` is polled between lookups so a user-triggered skip takes effect quickly
-        // instead of waiting for every in-flight and queued request to finish.
         async function verifyCandidatesWithDictionary(candidates, cat, keywords, onProgress, shouldCancel) {
             const CONCURRENCY = 8;
             let nextIdx = 0;
@@ -1078,10 +1219,6 @@
                     if (shouldCancel && shouldCancel()) return;
                     const idx = nextIdx++;
                     const r = candidates[idx];
-                    // Trust the word if stage 1 already vouched for it via a domain tag OR a literal
-                    // keyword/stem hit — only words that slipped through on weaker signals (i.e. the
-                    // association-rescue path, which checks semantic relatedness, not lexical overlap)
-                    // should be exposed to a dictionaryapi.dev 404 killing them outright.
                     const hadDomainTag = defDomainTags(r.clue).length > 0;
                     const hadThemeMatch = wordMatchesTheme(r.word, r.clue, cat, keywords);
                     const wasLexicallyTrusted = hadDomainTag || hadThemeMatch;
@@ -1099,25 +1236,9 @@
         }
 
         /* ============================= TRIGGER-WORD RESCUE (Datamuse) ============================= */
-        // ConceptNet (api.conceptnet.io) turned out to be unreliable from the browser (down/rate-
-        // limited/CORS in practice), so this rescue pass now stays entirely on Datamuse — the same
-        // domain the rest of the tool already depends on and knows works. It uses the `rel_trg`
-        // relation ("words statistically associated with this word in the same text", e.g. "cow"
-        // triggers "milking"), which plays the same role ConceptNet's relatedness score did: a
-        // *semantic*, non-literal signal for words the keyword/stem check was too strict to catch.
-        //
-        // Cheaper than the ConceptNet version too: instead of one network call per near-miss word,
-        // this makes one call per anchor term (returning up to 1000 associated words) and then just
-        // checks local set membership for every near-miss — so a few hundred near-misses cost 1-2
-        // requests total, not a few hundred.
-        //
-        // Used as a *rescue* pass only, exactly as before: it can add words back, never remove any
-        // that already got accepted.
         const DATAMUSE_TRIGGERS_URL = 'https://api.datamuse.com/words';
         const ASSOC_TIMEOUT_MS = 6000;
 
-        // Single-word anchors only — rel_trg works on individual words, and multi-word category
-        // labels/seeds (e.g. "Stars & Omens", "night sky") wouldn't query cleanly.
         function assocAnchors(cat) {
             const anchors = [];
             (cat.label || '').toLowerCase().split(/\s+/).forEach(w => {
@@ -1145,7 +1266,7 @@
                 });
                 return map;
             } catch (_) {
-                return null; // network/CORS/timeout — treat as "couldn't confirm", not "unrelated"
+                return null;
             } finally {
                 clearTimeout(timer);
             }
@@ -1161,7 +1282,7 @@
                 const m = await fetchTriggerWords(anchor);
                 if (m) maps.push(m);
             }
-            if (maps.length === 0) return { rescued: [], reachable: false }; // every anchor request failed
+            if (maps.length === 0) return { rescued: [], reachable: false };
 
             const rescued = [];
             let done = 0;
@@ -1229,9 +1350,6 @@
             let rescuedCount = 0;
             let assocUnreachable = false;
 
-            // Stage 1: trigger-word rescue (Datamuse rel_trg). Runs on words the lexical check passed
-            // over — no keyword/stem/domain-tag hit — so this is purely trying to *recover* good words
-            // the first pass was too literal to catch, not to filter anything already accepted.
             const conceptToggle = document.getElementById('conceptRescueToggle');
             if (conceptToggle && conceptToggle.checked && allNearMisses.length > 0) {
                 fetchBtn.disabled = true;
@@ -1268,7 +1386,6 @@
                 return;
             }
 
-            // Stage 2: free-dictionary verification of the combined set (lexically-accepted + rescued).
             const dictToggle = document.getElementById('dictVerifyToggle');
             let removedByDict = 0;
             let dictCancelled = false;
@@ -1281,7 +1398,7 @@
                 skipBtn.style.display = '';
                 skipBtn.addEventListener('click', onSkipClick);
 
-                const etaSec = Math.ceil(results.length / 8 * 0.5); // rough: 8 in flight, ~0.5s/lookup avg
+                const etaSec = Math.ceil(results.length / 8 * 0.5);
                 statusEl.textContent = `Verifying ${results.length} word(s) with a free dictionary… (~${etaSec}s, or click Skip below)`;
                 statusEl.className = "status-line";
 
@@ -1335,11 +1452,7 @@
                 if (key === activeCat) opt.selected = true;
                 select.appendChild(opt);
             });
-
-            // update inline indicator
             updateCategoryIndicator();
-
-            // accent border on seed card
             const c = CATEGORIES[activeCat];
             document.getElementById('seedCard').style.setProperty('--cat-color', c.color);
             document.getElementById('seedCard').classList.add('accent');
@@ -1396,7 +1509,8 @@
               <div class="wc-body">
                 <div class="wc-top">
                   <span class="wc-word">${r.word}</span>
-                  ${r.autoDecided ? '<span class="wc-auto" title="Auto-decided — verify this one">AUTO</span>' : ''}
+                  ${r.autoDecided ? `<span class="wc-auto" title="Auto-decided — verify this one">AUTO</span>` : ''}
+                  ${r._decisionReason ? `<span class="wc-reason" title="${r._decisionReason} (score ${r._relevanceScore ?? '?'})">ℹ️</span>` : ''}
                   ${r._dictConfirmed ? '<span class="wc-dict" title="A free-dictionary definition also matched this category">📖</span>' : ''}
                   ${r._assocRescued ? `<span class="wc-concept" title="Rescued via Datamuse word-association data — score ${r._assocScore}">🔗</span>` : ''}
                   <span class="wc-seed" title="Source seed">${r.sourceSeed || '—'}</span>
@@ -1415,9 +1529,9 @@
             grid.querySelectorAll('.status-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const idx = parseInt(btn.dataset.idx);
-                    const action = btn.dataset.action; // 'kept' or 'rejected'
+                    const action = btn.dataset.action;
                     results[idx].status = results[idx].status === action ? 'pending' : action;
-                    delete results[idx].autoDecided; // human just made the call, override the AUTO tag
+                    delete results[idx].autoDecided;
                     renderResults();
                     renderSeedAnalysis();
                 });
@@ -1436,7 +1550,7 @@
 
         function renderSeedAnalysis() {
             const box = document.getElementById('seedAnalysis');
-            if (box.style.display === 'none') return; // don't bother computing while hidden
+            if (box.style.display === 'none') return;
             const bySeed = {};
             results.forEach(r => {
                 const s = r.sourceSeed || '(unknown)';
@@ -1451,7 +1565,6 @@
                     return { seed, total: v.total, kept: v.kept, reviewed, pct: reviewed > 0 ? v.kept / reviewed : null };
                 })
                 .sort((a, b) => {
-                    // seeds with data sort by pct desc; unreviewed seeds sink to the bottom
                     if (a.pct === null && b.pct === null) return b.total - a.total;
                     if (a.pct === null) return 1;
                     if (b.pct === null) return -1;
@@ -1492,6 +1605,7 @@
             document.getElementById('exportCard').style.display = 'none';
             document.getElementById('statusLine').textContent = '';
             document.getElementById('statusLine').className = 'status-line';
+            document.getElementById('autoInfo').style.display = 'none';
             renderCategoryDropdown();
             renderSeedCard();
         });
@@ -1525,6 +1639,18 @@
             renderSeedAnalysis();
         });
         document.getElementById('autoReviewBtn').addEventListener('click', runAutoReview);
+        document.getElementById('clearAutoBtn').addEventListener('click', () => {
+            results.forEach(r => {
+                if (r.autoDecided) {
+                    r.status = 'pending';
+                    delete r.autoDecided;
+                }
+            });
+            renderResults();
+            renderSeedAnalysis();
+            document.getElementById('statusLine').textContent = 'Cleared all auto-decisions.';
+            document.getElementById('statusLine').className = 'status-line';
+        });
         document.getElementById('seedAnalysisBtn').addEventListener('click', () => {
             const box = document.getElementById('seedAnalysis');
             const btn = document.getElementById('seedAnalysisBtn');
