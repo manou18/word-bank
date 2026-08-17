@@ -1035,8 +1035,10 @@
         // What it deliberately does NOT do: hard-reject a word just because dictionaryapi.dev doesn't
         // have it. That dataset skews toward common vocabulary, so obscure "legendary"-tier scientific
         // terms (the kind Wiktionary/Datamuse carries but a smaller dictionary might not) are common
-        // false negatives there. A 404 is only used to drop a word when Datamuse's own clue for it had
-        // no domain tag either — i.e. neither source could vouch for it.
+        // false negatives there. A 404 is only used to drop a word when Datamuse's own clue for it was
+        // *not* already lexically trusted — i.e. it had no domain tag AND no literal keyword/stem hit,
+        // meaning it only got in via the weaker association-rescue (semantic) pass and neither source
+        // could vouch for it lexically.
         const DICT_API_BASE = 'https://api.dictionaryapi.dev/api/v2/entries/en/';
         const DICT_LOOKUP_TIMEOUT_MS = 4000; // a hung request must not be able to stall the whole pass
 
@@ -1076,9 +1078,15 @@
                     if (shouldCancel && shouldCancel()) return;
                     const idx = nextIdx++;
                     const r = candidates[idx];
+                    // Trust the word if stage 1 already vouched for it via a domain tag OR a literal
+                    // keyword/stem hit — only words that slipped through on weaker signals (i.e. the
+                    // association-rescue path, which checks semantic relatedness, not lexical overlap)
+                    // should be exposed to a dictionaryapi.dev 404 killing them outright.
                     const hadDomainTag = defDomainTags(r.clue).length > 0;
+                    const hadThemeMatch = wordMatchesTheme(r.word, r.clue, cat, keywords);
+                    const wasLexicallyTrusted = hadDomainTag || hadThemeMatch;
                     const info = await lookupFreeDictionary(r.word);
-                    if (info.found === false && !hadDomainTag) {
+                    if (info.found === false && !wasLexicallyTrusted) {
                         r._dictReject = true;
                     } else if (info.found) {
                         r._dictConfirmed = info.defs.some(d => wordMatchesTheme(r.word, d, cat, keywords));
