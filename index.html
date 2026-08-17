@@ -642,14 +642,14 @@
                 </div>
                 <label class="dict-verify-toggle">
                     <input type="checkbox" id="conceptRescueToggle" checked />
-                    <span>Rescue near-misses with ConceptNet (checks semantic relatedness for words the keyword check alone would drop)</span>
+                    <span>Rescue near-misses via word association (checks Datamuse's related-word data for words the keyword check alone would drop)</span>
                 </label>
                 <label class="dict-verify-toggle">
                     <input type="checkbox" id="dictVerifyToggle" checked />
                     <span>Verify with a free dictionary API after gathering (slower, catches non-words &amp; strengthens relevance)</span>
                 </label>
                 <div class="status-line" id="statusLine"></div>
-                <button class="btn small ghost" id="skipConceptBtn" style="display:none;margin-top:6px;">Skip ConceptNet check, use results as-is</button>
+                <button class="btn small ghost" id="skipConceptBtn" style="display:none;margin-top:6px;">Skip association check, use results as-is</button>
                 <button class="btn small ghost" id="skipDictBtn" style="display:none;margin-top:6px;">Skip verification, use results as-is</button>
             </section>
 
@@ -980,7 +980,7 @@
             const avoidDomains = cat.avoidDomains || [];
             const keywords = categoryKeywords(cat);
             const found = [];
-            const nearMisses = []; // passed avoidDomains but no keyword/stem/tag hit — candidates for ConceptNet rescue
+            const nearMisses = []; // passed avoidDomains but no keyword/stem/tag hit — candidates for the association rescue pass
             for (const entry of data) {
                 const word = (entry.word || '').toUpperCase();
                 if (!/^[A-Z]{3,13}$/.test(word)) continue;
@@ -1010,7 +1010,7 @@
                     // No literal keyword/stem/tag match — but that's a lexical test, and plenty of
                     // genuinely on-topic words (FILAMENT for nebulae, CHILL for a clear night) just
                     // don't happen to repeat a seed word. Keep it as a near-miss instead of dropping
-                    // outright, so ConceptNet can check *semantic* relatedness afterward.
+                    // outright, so the association rescue pass can check *semantic* relatedness afterward.
                     if (!isSafeCandidate(entry, onDomainDefs[0])) continue;
                     nearMisses.push({ word, clue: onDomainDefs[0], tier: tierForLength(word.length), status: 'pending', sourceSeed: seed });
                     continue;
@@ -1090,41 +1090,52 @@
             await Promise.all(Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, worker));
         }
 
-        /* ============================= CONCEPTNET RESCUE ============================= */
-        // Free, keyless, CORS-enabled semantic-relatedness API (api.conceptnet.io), built on word
-        // embeddings rather than literal text overlap. Used as a *rescue* pass, never a rejection
-        // pass: it only runs on words that already survived avoidDomains but had no keyword/stem/
-        // domain-tag hit (the `nearMisses` from fetchOneSeed) — words the literal check was too
-        // strict to catch even though they may genuinely belong (e.g. FILAMENT for nebulae, CHILL
-        // for a clear night sky). A near-miss is promoted into results only if its relatedness score
-        // against the category's anchor concept(s) clears the threshold; nothing already accepted
-        // can be removed by this stage.
-        const CONCEPTNET_BASE = 'https://api.conceptnet.io/relatedness';
-        const CONCEPTNET_TIMEOUT_MS = 4000;
-        const CONCEPTNET_THRESHOLD = 0.25; // ConceptNet relatedness runs -1..1; unrelated pairs cluster near 0
+        /* ============================= TRIGGER-WORD RESCUE (Datamuse) ============================= */
+        // ConceptNet (api.conceptnet.io) turned out to be unreliable from the browser (down/rate-
+        // limited/CORS in practice), so this rescue pass now stays entirely on Datamuse — the same
+        // domain the rest of the tool already depends on and knows works. It uses the `rel_trg`
+        // relation ("words statistically associated with this word in the same text", e.g. "cow"
+        // triggers "milking"), which plays the same role ConceptNet's relatedness score did: a
+        // *semantic*, non-literal signal for words the keyword/stem check was too strict to catch.
+        //
+        // Cheaper than the ConceptNet version too: instead of one network call per near-miss word,
+        // this makes one call per anchor term (returning up to 1000 associated words) and then just
+        // checks local set membership for every near-miss — so a few hundred near-misses cost 1-2
+        // requests total, not a few hundred.
+        //
+        // Used as a *rescue* pass only, exactly as before: it can add words back, never remove any
+        // that already got accepted.
+        const DATAMUSE_TRIGGERS_URL = 'https://api.datamuse.com/words';
+        const ASSOC_TIMEOUT_MS = 6000;
 
-        function toConceptNetNode(text) {
-            return encodeURIComponent(text.toLowerCase().trim().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''));
-        }
-
-        // Keep this to at most 2 short anchor terms — each near-miss word costs one relatedness
-        // call per anchor, and near-miss lists can run into the hundreds.
-        function conceptAnchors(cat) {
+        // Single-word anchors only — rel_trg works on individual words, and multi-word category
+        // labels/seeds (e.g. "Stars & Omens", "night sky") wouldn't query cleanly.
+        function assocAnchors(cat) {
             const anchors = [];
-            if (cat.label) anchors.push(cat.label.toLowerCase());
-            if (cat.seeds && cat.seeds.length) anchors.push(cat.seeds[0].toLowerCase());
-            return [...new Set(anchors)].filter(Boolean).slice(0, 2);
+            (cat.label || '').toLowerCase().split(/\s+/).forEach(w => {
+                w = w.replace(/[^a-z]/g, '');
+                if (w.length >= 3) anchors.push(w);
+            });
+            (cat.seeds || []).forEach(seed => {
+                const s = seed.toLowerCase().trim();
+                if (/^[a-z]+$/.test(s) && s.length >= 3) anchors.push(s);
+            });
+            return [...new Set(anchors)].slice(0, 3);
         }
 
-        async function conceptNetRelatedness(word, anchor) {
+        async function fetchTriggerWords(anchor) {
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), CONCEPTNET_TIMEOUT_MS);
+            const timer = setTimeout(() => controller.abort(), ASSOC_TIMEOUT_MS);
             try {
-                const url = `${CONCEPTNET_BASE}?node1=/c/en/${toConceptNetNode(word)}&node2=/c/en/${toConceptNetNode(anchor)}`;
+                const url = `${DATAMUSE_TRIGGERS_URL}?rel_trg=${encodeURIComponent(anchor)}&max=1000`;
                 const res = await fetch(url, { signal: controller.signal });
                 if (!res.ok) return null;
                 const data = await res.json();
-                return typeof data.value === 'number' ? data.value : null;
+                const map = new Map();
+                data.forEach((entry, i) => {
+                    if (entry.word) map.set(entry.word.toLowerCase(), entry.score || (1000 - i));
+                });
+                return map;
             } catch (_) {
                 return null; // network/CORS/timeout — treat as "couldn't confirm", not "unrelated"
             } finally {
@@ -1132,45 +1143,37 @@
             }
         }
 
-        async function rescueNearMissesWithConceptNet(nearMisses, cat, onProgress, shouldCancel) {
-            const anchors = conceptAnchors(cat);
-            if (anchors.length === 0) return { rescued: [], reachable: null };
-            const CONCURRENCY = 6;
-            let nextIdx = 0;
-            let done = 0;
-            let successfulLookups = 0; // any lookup that got a real number back, rescued or not
-            let attemptedLookups = 0;
-            const rescued = [];
-            async function worker() {
-                while (nextIdx < nearMisses.length) {
-                    if (shouldCancel && shouldCancel()) return;
-                    const idx = nextIdx++;
-                    const r = nearMisses[idx];
-                    let bestScore = -1;
-                    for (const anchor of anchors) {
-                        attemptedLookups++;
-                        const score = await conceptNetRelatedness(r.word, anchor);
-                        if (typeof score === 'number') {
-                            successfulLookups++;
-                            if (score > bestScore) bestScore = score;
-                        }
-                    }
-                    if (bestScore >= CONCEPTNET_THRESHOLD) {
-                        r._conceptRescued = true;
-                        r._conceptScore = Math.round(bestScore * 100) / 100;
-                        rescued.push(r);
-                    }
-                    done++;
-                    if (onProgress) onProgress(done, nearMisses.length);
-                }
+        async function rescueNearMissesWithTriggers(nearMisses, cat, onProgress, shouldCancel) {
+            const anchors = assocAnchors(cat);
+            if (anchors.length === 0 || nearMisses.length === 0) return { rescued: [], reachable: null };
+
+            const maps = [];
+            for (const anchor of anchors) {
+                if (shouldCancel && shouldCancel()) return { rescued: [], reachable: null };
+                const m = await fetchTriggerWords(anchor);
+                if (m) maps.push(m);
             }
-            await Promise.all(Array.from({ length: Math.min(CONCURRENCY, nearMisses.length) }, worker));
-            // If literally nothing came back across every attempt, the API itself is almost certainly
-            // unreachable from here (network block, CORS, or an outage) rather than every word just
-            // being unrelated — that distinction matters so the caller can tell the user what happened
-            // instead of silently reporting "0 rescued" as if the check ran fine.
-            const reachable = attemptedLookups === 0 ? null : successfulLookups > 0;
-            return { rescued, reachable };
+            if (maps.length === 0) return { rescued: [], reachable: false }; // every anchor request failed
+
+            const rescued = [];
+            let done = 0;
+            for (const r of nearMisses) {
+                if (shouldCancel && shouldCancel()) break;
+                const wordLower = r.word.toLowerCase();
+                let bestScore = 0;
+                let hit = false;
+                for (const m of maps) {
+                    if (m.has(wordLower)) { hit = true; bestScore = Math.max(bestScore, m.get(wordLower)); }
+                }
+                if (hit) {
+                    r._assocRescued = true;
+                    r._assocScore = bestScore;
+                    rescued.push(r);
+                }
+                done++;
+                if (onProgress) onProgress(done, nearMisses.length);
+            }
+            return { rescued, reachable: true };
         }
 
         async function gatherWords() {
@@ -1216,11 +1219,11 @@
 
             const cat = CATEGORIES[activeCat];
             let rescuedCount = 0;
-            let conceptUnreachable = false;
+            let assocUnreachable = false;
 
-            // Stage 1: ConceptNet rescue. Runs on words the lexical check passed over — no keyword/
-            // stem/domain-tag hit — so this is purely trying to *recover* good words the first pass
-            // was too literal to catch, not to filter anything already accepted.
+            // Stage 1: trigger-word rescue (Datamuse rel_trg). Runs on words the lexical check passed
+            // over — no keyword/stem/domain-tag hit — so this is purely trying to *recover* good words
+            // the first pass was too literal to catch, not to filter anything already accepted.
             const conceptToggle = document.getElementById('conceptRescueToggle');
             if (conceptToggle && conceptToggle.checked && allNearMisses.length > 0) {
                 fetchBtn.disabled = true;
@@ -1230,20 +1233,20 @@
                 skipBtn.style.display = '';
                 skipBtn.addEventListener('click', onSkipClick);
 
-                statusEl.textContent = `Checking ${allNearMisses.length} near-miss word(s) against ConceptNet for semantic relatedness…`;
+                statusEl.textContent = `Checking ${allNearMisses.length} near-miss word(s) for association with the category…`;
                 statusEl.className = "status-line";
                 try {
-                    const { rescued, reachable } = await rescueNearMissesWithConceptNet(allNearMisses, cat, (done, total) => {
+                    const { rescued, reachable } = await rescueNearMissesWithTriggers(allNearMisses, cat, (done, total) => {
                         if (cancelled) return;
-                        statusEl.textContent = `Checking relatedness… (${done}/${total}) — click Skip to stop`;
+                        statusEl.textContent = `Checking associations… (${done}/${total}) — click Skip to stop`;
                         statusEl.className = "status-line";
                     }, () => cancelled);
                     rescuedCount = rescued.length;
-                    conceptUnreachable = reachable === false;
+                    assocUnreachable = reachable === false;
                     results = results.concat(rescued);
                 } catch (err) {
-                    console.error('ConceptNet rescue failed:', err);
-                    conceptUnreachable = true;
+                    console.error('Trigger-word rescue failed:', err);
+                    assocUnreachable = true;
                 }
                 skipBtn.removeEventListener('click', onSkipClick);
                 skipBtn.style.display = 'none';
@@ -1301,14 +1304,14 @@
             }
 
             const notes = [];
-            if (conceptUnreachable) notes.push("couldn't reach ConceptNet (blocked, rate-limited, or down) — no near-misses could be checked");
-            else if (rescuedCount > 0) notes.push(`ConceptNet rescued ${rescuedCount} near-miss word${rescuedCount === 1 ? '' : 's'}`);
+            if (assocUnreachable) notes.push("couldn't reach Datamuse for the association check — no near-misses could be checked");
+            else if (rescuedCount > 0) notes.push(`association check rescued ${rescuedCount} near-miss word${rescuedCount === 1 ? '' : 's'}`);
             if (removedByDict > 0) notes.push(`dictionary check dropped ${removedByDict} that weren't real standalone words`);
             if (dictCancelled) notes.push('dictionary check skipped partway — not every word was verified');
             statusEl.textContent =
                 `Found ${results.length} candidate word${results.length === 1 ? '' : 's'} across ${activeSeeds.length} search term${activeSeeds.length === 1 ? '' : 's'}` +
                 (notes.length ? ` (${notes.join('; ')}).` : '.');
-            statusEl.className = conceptUnreachable ? "status-line err" : "status-line ok";
+            statusEl.className = assocUnreachable ? "status-line err" : "status-line ok";
             renderResults();
             renderSeedAnalysis();
         }
@@ -1387,7 +1390,7 @@
                   <span class="wc-word">${r.word}</span>
                   ${r.autoDecided ? '<span class="wc-auto" title="Auto-decided — verify this one">AUTO</span>' : ''}
                   ${r._dictConfirmed ? '<span class="wc-dict" title="A free-dictionary definition also matched this category">📖</span>' : ''}
-                  ${r._conceptRescued ? `<span class="wc-concept" title="Rescued by ConceptNet — semantic relatedness score ${r._conceptScore}">🔗</span>` : ''}
+                  ${r._assocRescued ? `<span class="wc-concept" title="Rescued via Datamuse word-association data — score ${r._assocScore}">🔗</span>` : ''}
                   <span class="wc-seed" title="Source seed">${r.sourceSeed || '—'}</span>
                   <select class="tier-select" data-idx="${i}">
                     <option value="easy"${r.tier === 'easy' ? ' selected' : ''}>easy</option>
