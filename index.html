@@ -447,6 +447,17 @@
             border-color: #8a723f;
         }
 
+        .wc-auto {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: .5px;
+            color: #1c2344;
+            background: #9b7fc4;
+            border-radius: 5px;
+            padding: 1px 5px;
+        }
+
         .wc-seed {
             font-family: 'JetBrains Mono', monospace;
             font-size: 10px;
@@ -606,6 +617,7 @@
                     <div class="btn-row">
                         <button class="btn small" id="selAllBtn">Keep all</button>
                         <button class="btn small" id="selNoneBtn">Clear all</button>
+                        <button class="btn small" id="autoReviewBtn">Auto-review ✨</button>
                         <button class="btn small" id="seedAnalysisBtn">Seed analysis ▾</button>
                     </div>
                     <div class="btn-row">
@@ -788,6 +800,64 @@
             return tags.some(tag => avoidDomains.some(avoid => tag.includes(avoid)));
         }
 
+        /* ============================= HEURISTIC AUTO-REVIEW ============================= */
+        // No external API — this is a local, transparent, imperfect keyword heuristic meant
+        // to pre-sort the obvious cases so a human only has to review the ambiguous middle.
+        const STOPWORDS = new Set(["a","an","the","of","in","on","at","to","for","and","or",
+            "with","by","is","are","was","were","be","been","its","it's","this","that","as",
+            "such","body","related"]);
+
+        function categoryKeywords(cat) {
+            const words = new Set();
+            (cat.seeds || []).forEach(seed => {
+                seed.toLowerCase().split(/\s+/).forEach(w => {
+                    w = w.replace(/[^a-z]/g, '');
+                    if (w.length >= 4 && !STOPWORDS.has(w)) words.add(w);
+                });
+            });
+            cat.label.toLowerCase().split(/\s+/).forEach(w => {
+                w = w.replace(/[^a-z]/g, '');
+                if (w.length >= 4 && !STOPWORDS.has(w)) words.add(w);
+            });
+            return words;
+        }
+
+        function autoScoreWord(r, cat, keywords) {
+            const tags = defDomainTags(r.clue);
+            const avoidHit = tags.some(tag => (cat.avoidDomains || []).some(avoid => tag.includes(avoid)));
+            if (avoidHit) return 'rejected';
+
+            const haystack = (r.word + ' ' + r.clue).toLowerCase();
+            let hit = false;
+            for (const kw of keywords) {
+                // require a whole-word-ish match to cut down on false positives (e.g. "ore" inside "before")
+                if (new RegExp('\\b' + kw + '\\b').test(haystack)) { hit = true; break; }
+            }
+            return hit ? 'kept' : null; // null = stay pending, not confident either way
+        }
+
+        function runAutoReview() {
+            const cat = CATEGORIES[activeCat];
+            const keywords = categoryKeywords(cat);
+            let decided = 0;
+            results.forEach(r => {
+                if (r.status !== 'pending') return; // never overwrite a human decision
+                const verdict = autoScoreWord(r, cat, keywords);
+                if (verdict) {
+                    r.status = verdict;
+                    r.autoDecided = true;
+                    decided++;
+                }
+            });
+            renderResults();
+            renderSeedAnalysis();
+            const statusEl = document.getElementById('statusLine');
+            statusEl.textContent = decided > 0
+                ? `Auto-review marked ${decided} word${decided === 1 ? '' : 's'} — check the AUTO-tagged cards and adjust any it got wrong.`
+                : `Auto-review didn't find any confident matches among the pending words — review manually.`;
+            statusEl.className = 'status-line ok';
+        }
+
         function tierForLength(len) {
             if (len <= 4) return "easy";
             if (len <= 6) return "medium";
@@ -959,6 +1029,7 @@
               <div class="wc-body">
                 <div class="wc-top">
                   <span class="wc-word">${r.word}</span>
+                  ${r.autoDecided ? '<span class="wc-auto" title="Auto-decided — verify this one">AUTO</span>' : ''}
                   <span class="wc-seed" title="Source seed">${r.sourceSeed || '—'}</span>
                   <select class="tier-select" data-idx="${i}">
                     <option value="easy"${r.tier === 'easy' ? ' selected' : ''}>easy</option>
@@ -977,6 +1048,7 @@
                     const idx = parseInt(btn.dataset.idx);
                     const action = btn.dataset.action; // 'kept' or 'rejected'
                     results[idx].status = results[idx].status === action ? 'pending' : action;
+                    delete results[idx].autoDecided; // human just made the call, override the AUTO tag
                     renderResults();
                     renderSeedAnalysis();
                 });
@@ -1079,10 +1151,11 @@
             renderSeedAnalysis();
         });
         document.getElementById('selNoneBtn').addEventListener('click', () => {
-            results.forEach(r => r.status = 'pending');
+            results.forEach(r => { r.status = 'pending'; delete r.autoDecided; });
             renderResults();
             renderSeedAnalysis();
         });
+        document.getElementById('autoReviewBtn').addEventListener('click', runAutoReview);
         document.getElementById('seedAnalysisBtn').addEventListener('click', () => {
             const box = document.getElementById('seedAnalysis');
             const btn = document.getElementById('seedAnalysisBtn');
