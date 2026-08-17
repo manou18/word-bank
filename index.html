@@ -540,72 +540,105 @@
     <script>
         /* ============================= CATEGORY DATA ============================= */
         const CATEGORIES = {
-            metals: { label: "Metals", icon: "⛏️", color: "#8a94b8", seeds: ["metal", "ore", "alloy", "smith",
+            metals: { label: "Metals", icon: "⛏️", color: "#8a94b8", seeds: ["metal", "ore", "alloy", "smithing",
                     "mineral", "iron", "steel", "forge", "blacksmith", "bronze", "copper", "gold", "silver",
-                    "mining", "metallurgy", "smelting", "ingot", "anvil", "mine", "tin"
+                    "mining", "metallurgy", "smelting", "ingot", "anvil", "mine shaft", "tin"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "military", "anatomy"
                 ] },
-            food: { label: "Food", icon: "🍲", color: "#d99a5b", seeds: ["food", "meal", "cooking", "dish",
-                    "ingredient", "kitchen", "recipe", "bake", "spice", "feast", "meat", "vegetable", "fruit",
+            food: { label: "Food", icon: "🍲", color: "#d99a5b", seeds: ["food", "meal", "cooking", "side dish",
+                    "ingredient", "kitchen", "recipe", "baking", "spice", "feast", "meat", "vegetable", "fruit",
                     "bread", "soup", "stew", "farming", "nutrition", "cuisine", "pantry"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "anatomy", "medicine", "zoology", "nautical"
                 ] },
-            grain: { label: "Grain", icon: "🌾", color: "#c9a63f", seeds: ["grain", "wheat", "harvest", "crop",
-                    "flour", "barley", "oats", "rye", "corn", "rice", "mill", "milling", "farming", "field",
-                    "sheaf", "thresh", "agriculture", "seed", "bushel", "granary"
+            grain: { label: "Grain", icon: "🌾", color: "#c9a63f", seeds: ["grain", "wheat", "harvest",
+                    "grain crop", "flour", "barley", "oats", "rye", "corn", "rice", "grain mill", "milling",
+                    "farming", "field", "sheaf", "thresh", "agriculture", "seed grain", "bushel", "granary"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "zoology", "medicine", "nautical"
                 ] },
             animals: { label: "Animals", icon: "🐑", color: "#7fa876", seeds: ["animal", "livestock", "wildlife",
                     "creature", "beast", "mammal", "bird", "fish", "reptile", "insect", "predator", "herd",
                     "flock", "pet", "hunting", "prey", "breed", "species", "zoo", "herding"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "medicine", "pathology", "mathematics"
                 ] },
             magic: { label: "Magic", icon: "🔮", color: "#9b7fc4", seeds: ["magic", "spell", "sorcery",
-                    "enchantment", "ritual", "wizard", "witch", "potion", "curse", "charm", "mystic", "occult",
-                    "arcane", "alchemy", "supernatural", "conjure", "incantation", "rune", "divination",
-                    "mysticism"
+                    "enchantment", "ritual", "wizard", "witch", "potion", "curse", "magic charm", "mystic",
+                    "occult", "arcane", "alchemy", "supernatural", "conjure", "incantation", "rune",
+                    "divination", "mysticism"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "medicine", "anatomy", "mathematics", "geometry", "nautical", "zoology",
+                    "sports", "physics"
                 ] },
             cloth: { label: "Cloth", icon: "🧵", color: "#c77dab", seeds: ["cloth", "fabric", "textile",
-                    "weaving", "garment", "thread", "yarn", "sewing", "tailor", "wool", "cotton", "silk",
-                    "knitting", "embroidery", "loom", "dye", "spinning", "needle", "stitch", "clothing"
+                    "weaving", "garment", "sewing thread", "yarn", "sewing", "tailor", "wool", "cotton", "silk",
+                    "knitting", "embroidery", "loom", "dye", "spinning", "sewing needle", "stitch", "clothing"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "medicine", "nautical", "mathematics", "zoology"
                 ] },
             sea: { label: "Sea", icon: "🎣", color: "#5b9bc4", seeds: ["sea", "ocean", "fishing", "boat",
-                    "coast", "fish", "ship", "sailing", "harbor", "wave", "tide", "marine", "nautical",
-                    "fisherman", "shore", "beach", "dock", "anchor", "current", "maritime"
+                    "coast", "fish", "ship", "sailing", "harbor", "ocean wave", "tide", "marine", "nautical",
+                    "fisherman", "shore", "beach", "harbor dock", "anchor", "ocean current", "maritime"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "medicine", "mathematics", "anatomy"
                 ] },
             stone: { label: "Stone", icon: "🪨", color: "#9c9484", seeds: ["stone", "rock", "quarry",
-                    "masonry", "building", "brick", "wall", "construction", "mason", "granite", "marble",
+                    "masonry", "building", "brick", "stone wall", "construction", "mason", "granite", "marble",
                     "boulder", "cliff", "mountain", "cave", "architecture", "foundation", "mortar", "chisel",
                     "carve"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "medicine", "zoology", "nautical", "mathematics"
                 ] },
             herbs: { label: "Herbs", icon: "🌿", color: "#a3a15c", seeds: ["herb", "plant", "remedy", "spice",
-                    "medicine", "tea", "healing", "botanical", "garden", "flower", "root", "leaf", "tonic",
-                    "apothecary", "herbal", "cure", "treatment", "ointment", "seasoning", "aromatic"
+                    "medicine", "herbal tea", "healing", "botanical", "garden", "flower", "plant root",
+                    "plant leaf", "tonic", "apothecary", "herbal", "cure", "treatment", "ointment",
+                    "seasoning", "aromatic"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "nautical", "zoology", "mathematics", "geometry"
                 ] },
             nature: { label: "Nature", icon: "🌲", color: "#4a8f7f", seeds: ["nature", "forest", "wilderness",
                     "landscape", "outdoors", "mountain", "river", "lake", "valley", "tree", "meadow", "wild",
                     "ecosystem", "environment", "natural", "scenery", "terrain", "countryside", "woodland",
                     "earth"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "medicine", "mathematics", "nautical"
                 ] },
             war: { label: "War & Defense", icon: "⚔️", color: "#8f3d35", seeds: ["war", "battle", "military",
                     "combat", "weapon", "soldier", "army", "fight", "warrior", "sword", "shield", "siege",
                     "conflict", "defense", "attack", "strategy", "troop", "warfare", "fortress", "victory"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "mathematics", "geometry", "ophthalmology", "organic chemistry", "zoology"
                 ] },
             royalty: { label: "Royalty & Court", icon: "👑", color: "#5c4a8f", seeds: ["royalty", "king",
-                    "kingdom", "noble", "monarchy", "queen", "prince", "princess", "throne", "crown", "palace",
-                    "court", "aristocracy", "nobility", "ruler", "empire", "dynasty", "reign", "sovereign",
-                    "majesty"
+                    "kingdom", "noble", "monarchy", "queen", "prince", "princess", "throne", "royal crown",
+                    "palace", "royal court", "aristocracy", "nobility", "ruler", "empire", "dynasty", "reign",
+                    "sovereign", "majesty"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "medicine", "mathematics", "geometry", "nautical", "zoology", "anatomy"
                 ] },
             music: { label: "Music", icon: "🎻", color: "#3f8fa3", seeds: ["music", "song", "instrument",
-                    "melody", "sound", "singing", "orchestra", "band", "rhythm", "harmony", "composer",
-                    "musician", "concert", "tune", "lyrics", "symphony", "opera", "choir", "dance",
-                    "performance"
+                    "melody", "musical sound", "singing", "orchestra", "music band", "rhythm", "harmony",
+                    "composer", "musician", "concert", "musical tune", "lyrics", "symphony", "opera", "choir",
+                    "dance", "musical performance"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "medicine", "mathematics", "nautical", "zoology", "anatomy"
                 ] },
             weather: { label: "Weather", icon: "🌦️", color: "#8aa8b8", seeds: ["weather", "storm", "climate",
-                    "rain", "sky", "wind", "snow", "thunder", "cloud", "temperature", "season", "forecast",
-                    "atmosphere", "humidity", "sunshine", "precipitation", "hurricane", "tornado", "frost",
-                    "meteorology"
+                    "rain", "sky", "wind", "snow", "thunder", "cloud", "temperature", "weather season",
+                    "forecast", "atmosphere", "humidity", "sunshine", "precipitation", "hurricane", "tornado",
+                    "frost", "meteorology"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "medicine", "mathematics", "zoology", "nautical"
                 ] },
-            stars: { label: "Stars & Omens", icon: "🌌", color: "#4a3f7a", seeds: ["star", "astronomy", "sky",
-                    "cosmos", "celestial", "planet", "galaxy", "universe", "moon", "comet", "constellation",
-                    "telescope", "space", "orbit", "astrology", "zodiac", "nebula", "meteor", "night",
-                    "eclipse"
+            stars: { label: "Stars & Omens", icon: "🌌", color: "#4a3f7a", seeds: ["starlight", "astronomy", "night sky",
+                    "cosmos", "celestial body", "planet", "galaxy", "universe", "moon", "comet", "constellation",
+                    "telescope", "outer space", "orbit", "astrology", "zodiac", "nebula", "meteor", "stargazing",
+                    "lunar eclipse", "solar eclipse"
+                ], avoidDomains: ["surname", "initialism", "acronym", "software", "internet", "poker",
+                    "card games", "anatomy", "zoology", "medicine", "pathology", "mathematics", "geometry",
+                    "nautical", "ophthalmology", "organic chemistry", "science fiction"
                 ] },
         };
 
@@ -634,6 +667,23 @@
             if ((entry.tags || []).includes('prop')) return false;
             const lower = defText.toLowerCase();
             return !UNSAFE_DEF_MARKERS.some(marker => lower.includes(marker));
+        }
+
+        /* ============================= DOMAIN-DRIFT FILTER ============================= */
+        // Wiktionary/Datamuse definitions often lead with a domain tag, e.g. "(nautical) ...".
+        // A category can list domains that are never relevant to it (avoidDomains); any
+        // definition tagged with one of those is skipped in favor of another sense of the
+        // same word, or the word is dropped entirely if every sense is off-domain.
+        function defDomainTags(defText) {
+            const m = defText.match(/^\(([^)]+)\)/);
+            if (!m) return [];
+            return m[1].toLowerCase().split(',').map(t => t.trim());
+        }
+        function isDefDomainAvoided(defText, avoidDomains) {
+            if (!avoidDomains || avoidDomains.length === 0) return false;
+            const tags = defDomainTags(defText);
+            if (tags.length === 0) return false;
+            return tags.some(tag => avoidDomains.some(avoid => tag.includes(avoid)));
         }
 
         function tierForLength(len) {
@@ -674,15 +724,20 @@
             }
             if (!res.ok) throw new Error('Datamuse request failed: ' + res.status);
             const data = await res.json();
+            const avoidDomains = (CATEGORIES[activeCat] && CATEGORIES[activeCat].avoidDomains) || [];
             const found = [];
             for (const entry of data) {
                 const word = (entry.word || '').toUpperCase();
                 if (!/^[A-Z]{3,13}$/.test(word)) continue;
                 if (existing.has(word)) continue;
                 if (seenSoFar.has(word)) continue;
-                const defs = (entry.defs || []).map(cleanDatamuseDef).filter(Boolean);
-                if (defs.length === 0) continue;
-                const clue = defs[0];
+                const allDefs = (entry.defs || []).map(cleanDatamuseDef).filter(Boolean);
+                if (allDefs.length === 0) continue;
+                // Prefer a sense that isn't on the category's avoid-list; if every sense
+                // is off-domain, drop the word entirely instead of keeping a bad clue.
+                const onDomainDefs = allDefs.filter(d => !isDefDomainAvoided(d, avoidDomains));
+                if (onDomainDefs.length === 0) continue;
+                const clue = onDomainDefs[0];
                 if (!isSafeCandidate(entry, clue)) continue;
                 seenSoFar.add(word);
                 found.push({ word, clue, tier: tierForLength(word.length), checked: false });
