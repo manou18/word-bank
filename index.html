@@ -692,10 +692,10 @@
                 <!-- info box about auto-review criteria -->
                 <div class="info-box" id="autoInfo" style="display:none;">
                     <strong>Auto‑review criteria:</strong> 
-                    Relevance score based on keyword/stem matches, morphological relations (prefixes/suffixes), relational phrases in definitions (e.g., "related to [category]"), strong phrases ("used for", "made of"), close spelling (Levenshtein ≤1 for words ≤5 letters, ≤2 for longer), and domain tags. 
-                    Scientific domains (<code>biology, chemistry, physics…</code>) are trusted <strong>only if not</strong> in the category's <code>avoidDomains</code>. 
+                    Relevance score based on keyword/stem matches, morphological relations (prefixes/suffixes), relational phrases in definitions (e.g., "related to [category]"), strong phrases ("used for", "made of"), close spelling (edit distance scaled to word length), and domain tags. 
+                    Scientific domains (<code>biology, chemistry, physics…</code>) are trusted, unless that same domain is in this category's own avoid list. 
                     Words scoring ≥2 are <span style="color:#7fa876;">kept</span>, ≤‑1 are <span style="color:#c1583f;">rejected</span>, others stay <span style="color:#a9b0d4;">pending</span>. 
-                    Hover the ℹ️ icon to see the exact reason and score.
+                    Hover the ℹ️ icon to see the exact reason.
                 </div>
                 <div class="seed-analysis" id="seedAnalysis" style="display:none;"></div>
                 <div class="result-grid" id="resultGrid"></div>
@@ -986,18 +986,21 @@
             return false;
         }
 
-        // ----- MODIFIED: Levenshtein threshold depends on word length -----
         function hasCloseMatch(word, keywords) {
             const lower = word.toLowerCase();
-            const len = lower.length;
-            const threshold = len <= 5 ? 1 : 2;  // ≤5 letters → ≤1, otherwise ≤2
+            // Scale the allowed edit distance to word length. A flat ≤2 threshold is far too
+            // loose for short words — e.g. "moon" (4 letters) is distance 1 from "noon" and
+            // distance 2 from "moot", neither of which has anything to do with the category.
+            // Longer words have more room for a coincidental edit or two before the match
+            // becomes meaningless, so the threshold grows slowly with length.
+            const maxDist = lower.length <= 5 ? 1 : (lower.length <= 8 ? 2 : 3);
             for (const kw of keywords) {
-                if (levenshteinDistance(lower, kw) <= threshold) return true;
+                if (levenshteinDistance(lower, kw) <= maxDist) return true;
             }
             return false;
         }
 
-        // ----- MODIFIED: science bonus only if domain not in avoidDomains -----
+        // Compute a relevance score and return { verdict: 'kept'|'rejected'|null, reason: string, score: number }
         function scoreWord(r, cat, keywords) {
             let score = 0;
             let reasons = [];
@@ -1031,18 +1034,16 @@
                 reasons.push('strong phrase');
             }
 
-            // 6. Close match (Levenshtein) - now threshold depends on length
+            // 6. Close match (Levenshtein)
             if (hasCloseMatch(r.word, keywords)) {
                 score += 1;
                 reasons.push('close spelling');
             }
 
-            // 7. Domain tags (avoidance) and science bonus
+            // 7. Domain tags (avoidance)
             const tags = defDomainTags(r.clue);
-            const avoidDomains = cat.avoidDomains || [];
             let hasAvoid = false;
-            // Check if any tag is in avoidDomains
-            if (tags.some(tag => avoidDomains.some(avoid => tag.includes(avoid)))) {
+            if (tags.some(tag => (cat.avoidDomains || []).some(avoid => tag.includes(avoid)))) {
                 score -= 3;
                 hasAvoid = true;
                 reasons.push('avoided domain');
@@ -1056,18 +1057,14 @@
                 }
             }
 
-            // 9. Science domains bonus — ONLY if the tag is NOT in avoidDomains
-            const scienceHit = tags.some(tag => SCIENCE_DOMAINS.some(sci => tag.includes(sci)));
-            if (scienceHit) {
-                // Check if any science tag is also in avoidDomains — if so, skip bonus
-                const hasAvoidScience = tags.some(tag =>
-                    avoidDomains.some(avoid => tag.includes(avoid)) &&
-                    SCIENCE_DOMAINS.some(sci => tag.includes(sci))
-                );
-                if (!hasAvoidScience) {
-                    score += 2;
-                    reasons.push('science domain');
-                }
+            // 9. Science domains bonus — but only for tags this category hasn't already flagged as
+            // avoidDomains. Some categories (e.g. "magic" avoiding "physics", "food" avoiding
+            // "zoology") intentionally exclude a domain that's also in SCIENCE_DOMAINS; without this
+            // guard, that domain got -3 for the avoidance and +2 for the science bonus in the same
+            // pass, blunting the exclusion the category explicitly asked for.
+            if (!hasAvoid && tags.some(tag => SCIENCE_DOMAINS.some(sci => tag.includes(sci)))) {
+                score += 2;
+                reasons.push('science domain');
             }
 
             // 10. Safety: if unsafe, reject outright
@@ -1099,6 +1096,7 @@
                     r._relevanceScore = score;
                     decided++;
                 } else {
+                    // keep pending, but store the reason and score for display
                     r._decisionReason = reason + ` (score ${score})`;
                     r._relevanceScore = score;
                 }
@@ -1110,6 +1108,7 @@
                 ? `Auto-review marked ${decided} word${decided === 1 ? '' : 's'} — check the AUTO-tagged cards and adjust any it got wrong.`
                 : `Auto-review didn't find any confident matches among the pending words — review manually.`;
             statusEl.className = 'status-line ok';
+            // show info box
             document.getElementById('autoInfo').style.display = 'block';
         }
 
@@ -1163,14 +1162,12 @@
                 if (seenSoFar.has(word)) continue;
                 const allDefs = (entry.defs || []).map(cleanDatamuseDef).filter(Boolean);
                 if (allDefs.length === 0) continue;
-                // Exclude definitions that have avoided domains
                 const onDomainDefs = allDefs.filter(d => !isDefDomainAvoided(d, avoidDomains));
                 if (onDomainDefs.length === 0) continue;
                 let clue = null;
                 for (const d of onDomainDefs) {
                     const tags = defDomainTags(d);
                     const hasUsableTag = tags.length > 0 && !tags.some(t => SOFT_OFF_TAGS.some(s => t.includes(s)));
-                    // Science domains are trusted only if not in avoidDomains (already filtered out)
                     const isScience = tags.some(t => SCIENCE_DOMAINS.some(sci => t.includes(sci)));
                     if (hasUsableTag || isScience || wordMatchesTheme(word, d, cat, keywords)) { clue = d; break; }
                 }
