@@ -822,6 +822,13 @@
             return words;
         }
 
+        // These tags alone don't conflict with any specific category (so they're not part of
+        // avoidDomains), but a definition carrying one AND matching no domain keyword is very
+        // reliably noise — this is the "figurative/colloquial sense" pattern that slips past
+        // the hard avoidDomains check (e.g. "(informal) Someone remarkably skilled").
+        const SOFT_OFF_TAGS = ["informal", "slang", "colloquial", "figuratively", "chiefly informal",
+            "childish", "dated", "euphemistic", "derogatory", "vulgar", "text messaging"];
+
         function autoScoreWord(r, cat, keywords) {
             const tags = defDomainTags(r.clue);
             const avoidHit = tags.some(tag => (cat.avoidDomains || []).some(avoid => tag.includes(avoid)));
@@ -833,7 +840,12 @@
                 // require a whole-word-ish match to cut down on false positives (e.g. "ore" inside "before")
                 if (new RegExp('\\b' + kw + '\\b').test(haystack)) { hit = true; break; }
             }
-            return hit ? 'kept' : null; // null = stay pending, not confident either way
+            if (hit) return 'kept';
+
+            const softOffHit = tags.some(tag => SOFT_OFF_TAGS.some(soft => tag.includes(soft)));
+            if (softOffHit) return 'rejected'; // no domain keyword rescued it — likely a figurative/slang sense
+
+            return null; // not confident either way — stays pending
         }
 
         function runAutoReview() {
