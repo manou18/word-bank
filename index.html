@@ -1166,10 +1166,16 @@
                 if (onDomainDefs.length === 0) continue;
                 let clue = null;
                 for (const d of onDomainDefs) {
-                    const tags = defDomainTags(d);
-                    const hasUsableTag = tags.length > 0 && !tags.some(t => SOFT_OFF_TAGS.some(s => t.includes(s)));
-                    const isScience = tags.some(t => SCIENCE_DOMAINS.some(sci => t.includes(sci)));
-                    if (hasUsableTag || isScience || wordMatchesTheme(word, d, cat, keywords)) { clue = d; break; }
+                    // A domain tag alone (hasUsableTag) or membership in the generic SCIENCE_DOMAINS
+                    // list (isScience) used to be enough to accept a definition as this category's
+                    // clue — but neither actually checks that the domain has anything to do with the
+                    // category. That let unrelated definitions slip in: "(countable)" is a grammar
+                    // tag, not a domain; "(geology)"/"(biology)"/"(graphical user interface)" are real
+                    // domains but irrelevant to e.g. "Stars & Omens". wordMatchesTheme (literal
+                    // keyword/stem overlap with the category) is the only signal that actually proves
+                    // relevance, so it's now the sole admission criterion — a domain tag no longer
+                    // substitutes for it.
+                    if (wordMatchesTheme(word, d, cat, keywords)) { clue = d; break; }
                 }
                 if (!clue) {
                     if (!isSafeCandidate(entry, onDomainDefs[0])) continue;
