@@ -458,6 +458,27 @@
             padding: 1px 5px;
         }
 
+        .wc-dict {
+            font-size: 11px;
+            cursor: default;
+        }
+
+        .dict-verify-toggle {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-top: 10px;
+            font-size: 12px;
+            color: #a9b0d4;
+            line-height: 1.4;
+            cursor: pointer;
+        }
+        .dict-verify-toggle input {
+            margin-top: 2px;
+            accent-color: #d4a24c;
+            flex: none;
+        }
+
         .wc-seed {
             font-family: 'JetBrains Mono', monospace;
             font-size: 10px;
@@ -607,6 +628,10 @@
                     <button class="btn gold" id="fetchBtn">🔎 Gather words</button>
                     <button class="btn ghost" id="resetSeedsBtn">Reset to defaults</button>
                 </div>
+                <label class="dict-verify-toggle">
+                    <input type="checkbox" id="dictVerifyToggle" checked />
+                    <span>Verify with a free dictionary API after gathering (slower, catches non-words &amp; strengthens relevance)</span>
+                </label>
                 <div class="status-line" id="statusLine"></div>
             </section>
 
@@ -970,6 +995,66 @@
             return found;
         }
 
+        /* ============================= FREE DICTIONARY VERIFICATION ============================= */
+        // Optional second pass against api.dictionaryapi.dev (free, keyless, CORS-enabled — built on
+        // Wiktionary data, same as Datamuse's `md=d` defs, but queried per-word so it acts as an
+        // independent check rather than trusting Datamuse's own definition blindly).
+        //
+        // What it's for:
+        //  - Catching words that aren't real standalone dictionary entries (Datamuse's `ml=` endpoint
+        //    can return inflections, fragments, or near-misses that only exist as part of another word).
+        //  - Cross-checking theme relevance against a second, independently-worded definition.
+        //
+        // What it deliberately does NOT do: hard-reject a word just because dictionaryapi.dev doesn't
+        // have it. That dataset skews toward common vocabulary, so obscure "legendary"-tier scientific
+        // terms (the kind Wiktionary/Datamuse carries but a smaller dictionary might not) are common
+        // false negatives there. A 404 is only used to drop a word when Datamuse's own clue for it had
+        // no domain tag either — i.e. neither source could vouch for it.
+        const DICT_API_BASE = 'https://api.dictionaryapi.dev/api/v2/entries/en/';
+
+        async function lookupFreeDictionary(word) {
+            try {
+                const res = await fetch(DICT_API_BASE + encodeURIComponent(word.toLowerCase()));
+                if (res.status === 404) return { found: false, defs: [] };
+                if (!res.ok) return { found: null, defs: [] }; // unknown status — don't penalize the word
+                const data = await res.json();
+                const defs = [];
+                (data[0] && data[0].meanings || []).forEach(m => {
+                    (m.definitions || []).forEach(d => { if (d.definition) defs.push(d.definition); });
+                });
+                return { found: true, defs };
+            } catch (_) {
+                return { found: null, defs: [] }; // network/CORS hiccup — don't penalize the word
+            }
+        }
+
+        // Runs lookups with limited concurrency (the API is free/keyless, so this is polite as much
+        // as it is practical) and mutates each candidate in place:
+        //   r._dictReject     → true if it should be dropped (not found anywhere, and untrusted already)
+        //   r._dictConfirmed  → true if a dictionary definition also matched the theme (nice-to-have
+        //                        signal, surfaced as a small badge, not currently used to auto-keep)
+        async function verifyCandidatesWithDictionary(candidates, cat, keywords, onProgress) {
+            const CONCURRENCY = 5;
+            let nextIdx = 0;
+            let done = 0;
+            async function worker() {
+                while (nextIdx < candidates.length) {
+                    const idx = nextIdx++;
+                    const r = candidates[idx];
+                    const hadDomainTag = defDomainTags(r.clue).length > 0;
+                    const info = await lookupFreeDictionary(r.word);
+                    if (info.found === false && !hadDomainTag) {
+                        r._dictReject = true;
+                    } else if (info.found) {
+                        r._dictConfirmed = info.defs.some(d => wordMatchesTheme(r.word, d, cat, keywords));
+                    }
+                    done++;
+                    if (onProgress) onProgress(done, candidates.length);
+                }
+            }
+            await Promise.all(Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, worker));
+        }
+
         async function gatherWords() {
             const statusEl = document.getElementById('statusLine');
             const fetchBtn = document.getElementById('fetchBtn');
@@ -1003,6 +1088,39 @@
                 document.getElementById('resultsCard').style.display = 'none';
                 return;
             }
+
+            const dictToggle = document.getElementById('dictVerifyToggle');
+            if (dictToggle && dictToggle.checked) {
+                fetchBtn.disabled = true;
+                const cat = CATEGORIES[activeCat];
+                const keywords = categoryKeywords(cat);
+                try {
+                    await verifyCandidatesWithDictionary(results, cat, keywords, (done, total) => {
+                        statusEl.textContent = `Verifying with free dictionary… (${done}/${total})`;
+                        statusEl.className = "status-line";
+                    });
+                } catch (err) {
+                    console.error('Dictionary verification failed:', err);
+                }
+                const before = results.length;
+                results = results.filter(r => !r._dictReject);
+                const removedByDict = before - results.length;
+                fetchBtn.disabled = false;
+                if (results.length === 0) {
+                    statusEl.textContent = "Dictionary check removed every candidate — try different search terms.";
+                    statusEl.className = "status-line err";
+                    document.getElementById('resultsCard').style.display = 'none';
+                    return;
+                }
+                statusEl.textContent =
+                    `Found ${results.length} candidate word${results.length === 1 ? '' : 's'} across ${activeSeeds.length} search term${activeSeeds.length === 1 ? '' : 's'}` +
+                    (removedByDict > 0 ? ` (dictionary check dropped ${removedByDict} that weren't real standalone words).` : '.');
+                statusEl.className = "status-line ok";
+                renderResults();
+                renderSeedAnalysis();
+                return;
+            }
+
             statusEl.textContent =
                 `Found ${results.length} candidate word${results.length === 1 ? '' : 's'} across ${activeSeeds.length} search term${activeSeeds.length === 1 ? '' : 's'}.`;
             statusEl.className = "status-line ok";
@@ -1083,6 +1201,7 @@
                 <div class="wc-top">
                   <span class="wc-word">${r.word}</span>
                   ${r.autoDecided ? '<span class="wc-auto" title="Auto-decided — verify this one">AUTO</span>' : ''}
+                  ${r._dictConfirmed ? '<span class="wc-dict" title="A free-dictionary definition also matched this category">📖</span>' : ''}
                   <span class="wc-seed" title="Source seed">${r.sourceSeed || '—'}</span>
                   <select class="tier-select" data-idx="${i}">
                     <option value="easy"${r.tier === 'easy' ? ' selected' : ''}>easy</option>
