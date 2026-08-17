@@ -463,6 +463,18 @@
             cursor: default;
         }
 
+        .wc-concept {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: .5px;
+            color: #1c2344;
+            background: #7fc4b0;
+            border-radius: 5px;
+            padding: 1px 5px;
+            cursor: default;
+        }
+
         .dict-verify-toggle {
             display: flex;
             align-items: flex-start;
@@ -629,10 +641,15 @@
                     <button class="btn ghost" id="resetSeedsBtn">Reset to defaults</button>
                 </div>
                 <label class="dict-verify-toggle">
+                    <input type="checkbox" id="conceptRescueToggle" checked />
+                    <span>Rescue near-misses with ConceptNet (checks semantic relatedness for words the keyword check alone would drop)</span>
+                </label>
+                <label class="dict-verify-toggle">
                     <input type="checkbox" id="dictVerifyToggle" checked />
                     <span>Verify with a free dictionary API after gathering (slower, catches non-words &amp; strengthens relevance)</span>
                 </label>
                 <div class="status-line" id="statusLine"></div>
+                <button class="btn small ghost" id="skipConceptBtn" style="display:none;margin-top:6px;">Skip ConceptNet check, use results as-is</button>
                 <button class="btn small ghost" id="skipDictBtn" style="display:none;margin-top:6px;">Skip verification, use results as-is</button>
             </section>
 
@@ -963,6 +980,7 @@
             const avoidDomains = cat.avoidDomains || [];
             const keywords = categoryKeywords(cat);
             const found = [];
+            const nearMisses = []; // passed avoidDomains but no keyword/stem/tag hit — candidates for ConceptNet rescue
             for (const entry of data) {
                 const word = (entry.word || '').toUpperCase();
                 if (!/^[A-Z]{3,13}$/.test(word)) continue;
@@ -988,12 +1006,20 @@
                     const hasUsableTag = tags.length > 0 && !tags.some(t => SOFT_OFF_TAGS.some(s => t.includes(s)));
                     if (hasUsableTag || wordMatchesTheme(word, d, cat, keywords)) { clue = d; break; }
                 }
-                if (!clue) continue;
+                if (!clue) {
+                    // No literal keyword/stem/tag match — but that's a lexical test, and plenty of
+                    // genuinely on-topic words (FILAMENT for nebulae, CHILL for a clear night) just
+                    // don't happen to repeat a seed word. Keep it as a near-miss instead of dropping
+                    // outright, so ConceptNet can check *semantic* relatedness afterward.
+                    if (!isSafeCandidate(entry, onDomainDefs[0])) continue;
+                    nearMisses.push({ word, clue: onDomainDefs[0], tier: tierForLength(word.length), status: 'pending', sourceSeed: seed });
+                    continue;
+                }
                 if (!isSafeCandidate(entry, clue)) continue;
                 seenSoFar.add(word);
                 found.push({ word, clue, tier: tierForLength(word.length), status: 'pending', sourceSeed: seed });
             }
-            return found;
+            return { found, nearMisses };
         }
 
         /* ============================= FREE DICTIONARY VERIFICATION ============================= */
@@ -1064,6 +1090,78 @@
             await Promise.all(Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, worker));
         }
 
+        /* ============================= CONCEPTNET RESCUE ============================= */
+        // Free, keyless, CORS-enabled semantic-relatedness API (api.conceptnet.io), built on word
+        // embeddings rather than literal text overlap. Used as a *rescue* pass, never a rejection
+        // pass: it only runs on words that already survived avoidDomains but had no keyword/stem/
+        // domain-tag hit (the `nearMisses` from fetchOneSeed) — words the literal check was too
+        // strict to catch even though they may genuinely belong (e.g. FILAMENT for nebulae, CHILL
+        // for a clear night sky). A near-miss is promoted into results only if its relatedness score
+        // against the category's anchor concept(s) clears the threshold; nothing already accepted
+        // can be removed by this stage.
+        const CONCEPTNET_BASE = 'https://api.conceptnet.io/relatedness';
+        const CONCEPTNET_TIMEOUT_MS = 4000;
+        const CONCEPTNET_THRESHOLD = 0.25; // ConceptNet relatedness runs -1..1; unrelated pairs cluster near 0
+
+        function toConceptNetNode(text) {
+            return encodeURIComponent(text.toLowerCase().trim().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''));
+        }
+
+        // Keep this to at most 2 short anchor terms — each near-miss word costs one relatedness
+        // call per anchor, and near-miss lists can run into the hundreds.
+        function conceptAnchors(cat) {
+            const anchors = [];
+            if (cat.label) anchors.push(cat.label.toLowerCase());
+            if (cat.seeds && cat.seeds.length) anchors.push(cat.seeds[0].toLowerCase());
+            return [...new Set(anchors)].filter(Boolean).slice(0, 2);
+        }
+
+        async function conceptNetRelatedness(word, anchor) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), CONCEPTNET_TIMEOUT_MS);
+            try {
+                const url = `${CONCEPTNET_BASE}?node1=/c/en/${toConceptNetNode(word)}&node2=/c/en/${toConceptNetNode(anchor)}`;
+                const res = await fetch(url, { signal: controller.signal });
+                if (!res.ok) return null;
+                const data = await res.json();
+                return typeof data.value === 'number' ? data.value : null;
+            } catch (_) {
+                return null; // network/CORS/timeout — treat as "couldn't confirm", not "unrelated"
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        async function rescueNearMissesWithConceptNet(nearMisses, cat, onProgress, shouldCancel) {
+            const anchors = conceptAnchors(cat);
+            if (anchors.length === 0) return [];
+            const CONCURRENCY = 6;
+            let nextIdx = 0;
+            let done = 0;
+            const rescued = [];
+            async function worker() {
+                while (nextIdx < nearMisses.length) {
+                    if (shouldCancel && shouldCancel()) return;
+                    const idx = nextIdx++;
+                    const r = nearMisses[idx];
+                    let bestScore = -1;
+                    for (const anchor of anchors) {
+                        const score = await conceptNetRelatedness(r.word, anchor);
+                        if (typeof score === 'number' && score > bestScore) bestScore = score;
+                    }
+                    if (bestScore >= CONCEPTNET_THRESHOLD) {
+                        r._conceptRescued = true;
+                        r._conceptScore = Math.round(bestScore * 100) / 100;
+                        rescued.push(r);
+                    }
+                    done++;
+                    if (onProgress) onProgress(done, nearMisses.length);
+                }
+            }
+            await Promise.all(Array.from({ length: Math.min(CONCURRENCY, nearMisses.length) }, worker));
+            return rescued;
+        }
+
         async function gatherWords() {
             const statusEl = document.getElementById('statusLine');
             const fetchBtn = document.getElementById('fetchBtn');
@@ -1076,12 +1174,19 @@
             const existing = parseExistingBank(document.getElementById('existingBank').value);
             const seenSoFar = new Set();
             const all = [];
+            const allNearMisses = [];
+            const nearMissSeen = new Set();
             for (let i = 0; i < activeSeeds.length; i++) {
                 statusEl.textContent = `Searching "${activeSeeds[i]}"… (${i + 1}/${activeSeeds.length})`;
                 statusEl.className = "status-line";
                 try {
-                    const found = await fetchOneSeed(activeSeeds[i], existing, seenSoFar);
+                    const { found, nearMisses } = await fetchOneSeed(activeSeeds[i], existing, seenSoFar);
                     all.push(...found);
+                    for (const nm of nearMisses) {
+                        if (nearMissSeen.has(nm.word) || seenSoFar.has(nm.word)) continue;
+                        nearMissSeen.add(nm.word);
+                        allNearMisses.push(nm);
+                    }
                 } catch (err) {
                     console.error(`Failed on seed "${activeSeeds[i]}":`, err);
                     statusEl.textContent =
@@ -1090,23 +1195,64 @@
                 }
             }
             results = all;
-            fetchBtn.disabled = false;
-            if (results.length === 0) {
+            if (results.length === 0 && allNearMisses.length === 0) {
+                fetchBtn.disabled = false;
                 statusEl.textContent = "No new words found — try different or additional search terms.";
                 statusEl.className = "status-line err";
                 document.getElementById('resultsCard').style.display = 'none';
                 return;
             }
 
+            const cat = CATEGORIES[activeCat];
+            let rescuedCount = 0;
+
+            // Stage 1: ConceptNet rescue. Runs on words the lexical check passed over — no keyword/
+            // stem/domain-tag hit — so this is purely trying to *recover* good words the first pass
+            // was too literal to catch, not to filter anything already accepted.
+            const conceptToggle = document.getElementById('conceptRescueToggle');
+            if (conceptToggle && conceptToggle.checked && allNearMisses.length > 0) {
+                fetchBtn.disabled = true;
+                let cancelled = false;
+                const skipBtn = document.getElementById('skipConceptBtn');
+                const onSkipClick = () => { cancelled = true; };
+                skipBtn.style.display = '';
+                skipBtn.addEventListener('click', onSkipClick);
+
+                statusEl.textContent = `Checking ${allNearMisses.length} near-miss word(s) against ConceptNet for semantic relatedness…`;
+                statusEl.className = "status-line";
+                try {
+                    const rescued = await rescueNearMissesWithConceptNet(allNearMisses, cat, (done, total) => {
+                        if (cancelled) return;
+                        statusEl.textContent = `Checking relatedness… (${done}/${total}) — click Skip to stop`;
+                        statusEl.className = "status-line";
+                    }, () => cancelled);
+                    rescuedCount = rescued.length;
+                    results = results.concat(rescued);
+                } catch (err) {
+                    console.error('ConceptNet rescue failed:', err);
+                }
+                skipBtn.removeEventListener('click', onSkipClick);
+                skipBtn.style.display = 'none';
+            }
+
+            if (results.length === 0) {
+                fetchBtn.disabled = false;
+                statusEl.textContent = "No new words found — try different or additional search terms.";
+                statusEl.className = "status-line err";
+                document.getElementById('resultsCard').style.display = 'none';
+                return;
+            }
+
+            // Stage 2: free-dictionary verification of the combined set (lexically-accepted + rescued).
             const dictToggle = document.getElementById('dictVerifyToggle');
+            let removedByDict = 0;
+            let dictCancelled = false;
             if (dictToggle && dictToggle.checked) {
                 fetchBtn.disabled = true;
-                const cat = CATEGORIES[activeCat];
                 const keywords = categoryKeywords(cat);
 
-                let cancelled = false;
                 const skipBtn = document.getElementById('skipDictBtn');
-                const onSkipClick = () => { cancelled = true; };
+                const onSkipClick = () => { dictCancelled = true; };
                 skipBtn.style.display = '';
                 skipBtn.addEventListener('click', onSkipClick);
 
@@ -1116,10 +1262,10 @@
 
                 try {
                     await verifyCandidatesWithDictionary(results, cat, keywords, (done, total) => {
-                        if (cancelled) return;
+                        if (dictCancelled) return;
                         statusEl.textContent = `Verifying with free dictionary… (${done}/${total}) — click Skip to stop and keep current results`;
                         statusEl.className = "status-line";
-                    }, () => cancelled);
+                    }, () => dictCancelled);
                 } catch (err) {
                     console.error('Dictionary verification failed:', err);
                 }
@@ -1129,26 +1275,24 @@
 
                 const before = results.length;
                 results = results.filter(r => !r._dictReject);
-                const removedByDict = before - results.length;
-                fetchBtn.disabled = false;
-                if (results.length === 0) {
-                    statusEl.textContent = "Dictionary check removed every candidate — try different search terms.";
-                    statusEl.className = "status-line err";
-                    document.getElementById('resultsCard').style.display = 'none';
-                    return;
-                }
-                statusEl.textContent =
-                    `Found ${results.length} candidate word${results.length === 1 ? '' : 's'} across ${activeSeeds.length} search term${activeSeeds.length === 1 ? '' : 's'}` +
-                    (cancelled ? ' (verification skipped partway — not every word was checked).' :
-                        (removedByDict > 0 ? ` (dictionary check dropped ${removedByDict} that weren't real standalone words).` : '.'));
-                statusEl.className = "status-line ok";
-                renderResults();
-                renderSeedAnalysis();
+                removedByDict = before - results.length;
+            }
+
+            fetchBtn.disabled = false;
+            if (results.length === 0) {
+                statusEl.textContent = "Dictionary check removed every candidate — try different search terms.";
+                statusEl.className = "status-line err";
+                document.getElementById('resultsCard').style.display = 'none';
                 return;
             }
 
+            const notes = [];
+            if (rescuedCount > 0) notes.push(`ConceptNet rescued ${rescuedCount} near-miss word${rescuedCount === 1 ? '' : 's'}`);
+            if (removedByDict > 0) notes.push(`dictionary check dropped ${removedByDict} that weren't real standalone words`);
+            if (dictCancelled) notes.push('dictionary check skipped partway — not every word was verified');
             statusEl.textContent =
-                `Found ${results.length} candidate word${results.length === 1 ? '' : 's'} across ${activeSeeds.length} search term${activeSeeds.length === 1 ? '' : 's'}.`;
+                `Found ${results.length} candidate word${results.length === 1 ? '' : 's'} across ${activeSeeds.length} search term${activeSeeds.length === 1 ? '' : 's'}` +
+                (notes.length ? ` (${notes.join('; ')}).` : '.');
             statusEl.className = "status-line ok";
             renderResults();
             renderSeedAnalysis();
@@ -1228,6 +1372,7 @@
                   <span class="wc-word">${r.word}</span>
                   ${r.autoDecided ? '<span class="wc-auto" title="Auto-decided — verify this one">AUTO</span>' : ''}
                   ${r._dictConfirmed ? '<span class="wc-dict" title="A free-dictionary definition also matched this category">📖</span>' : ''}
+                  ${r._conceptRescued ? `<span class="wc-concept" title="Rescued by ConceptNet — semantic relatedness score ${r._conceptScore}">🔗</span>` : ''}
                   <span class="wc-seed" title="Source seed">${r.sourceSeed || '—'}</span>
                   <select class="tier-select" data-idx="${i}">
                     <option value="easy"${r.tier === 'easy' ? ' selected' : ''}>easy</option>
