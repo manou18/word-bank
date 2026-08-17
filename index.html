@@ -1179,7 +1179,11 @@
                 }
                 if (!clue) {
                     if (!isSafeCandidate(entry, onDomainDefs[0])) continue;
-                    nearMisses.push({ word, clue: onDomainDefs[0], tier: tierForLength(word.length), status: 'pending', sourceSeed: seed });
+                    // Keep every candidate definition (not just the first) so that IF this word
+                    // later gets rescued via word-association, the rescue step can pick whichever
+                    // definition actually carries some thematic content instead of being stuck with
+                    // an arbitrary, possibly unrelated, first definition.
+                    nearMisses.push({ word, clue: onDomainDefs[0], defs: onDomainDefs, tier: tierForLength(word.length), status: 'pending', sourceSeed: seed });
                     continue;
                 }
                 if (!isSafeCandidate(entry, clue)) continue;
@@ -1275,6 +1279,25 @@
             }
         }
 
+        // Scores a single candidate definition's textual relevance to the category, reusing the
+        // same partial signals as scoreWord (minus the generic-word/unsafe checks, which are
+        // word-level and already handled elsewhere). Used only during rescue, where — by
+        // definition — none of a word's definitions passed the strict wordMatchesTheme bar during
+        // initial discovery, so this looks for weaker-but-real textual evidence instead.
+        function scoreDefinitionForRescue(word, defText, cat, keywords) {
+            let score = 0;
+            if (wordMatchesTheme(word, defText, cat, keywords)) score += 3;
+            if (hasMorphologicalRelation(word, keywords)) score += 2;
+            if (definitionHasRelationalPhrase(defText, cat.label, false)) score += 2;
+            if (definitionHasRelationalPhrase(defText, cat.label, true)) score += 3;
+            if (hasCloseMatch(word, keywords)) score += 1;
+            const tags = defDomainTags(defText);
+            const avoidHit = tags.some(t => (cat.avoidDomains || []).some(a => t.includes(a)));
+            if (avoidHit) score -= 3;
+            if (!avoidHit && tags.some(t => SCIENCE_DOMAINS.some(s => t.includes(s)))) score += 2;
+            return score;
+        }
+
         async function rescueNearMissesWithTriggers(nearMisses, cat, onProgress, shouldCancel) {
             const anchors = assocAnchors(cat);
             if (anchors.length === 0 || nearMisses.length === 0) return { rescued: [], reachable: null };
@@ -1287,20 +1310,42 @@
             }
             if (maps.length === 0) return { rescued: [], reachable: false };
 
+            const keywords = categoryKeywords(cat);
             const rescued = [];
             let done = 0;
             for (const r of nearMisses) {
                 if (shouldCancel && shouldCancel()) break;
                 const wordLower = r.word.toLowerCase();
-                let bestScore = 0;
+                let bestAssocScore = 0;
                 let hit = false;
                 for (const m of maps) {
-                    if (m.has(wordLower)) { hit = true; bestScore = Math.max(bestScore, m.get(wordLower)); }
+                    if (m.has(wordLower)) { hit = true; bestAssocScore = Math.max(bestAssocScore, m.get(wordLower)); }
                 }
                 if (hit) {
-                    r._assocRescued = true;
-                    r._assocScore = bestScore;
-                    rescued.push(r);
+                    // Word-association alone isn't enough — it only proves the WORD is
+                    // contextually associated with the category, not that the CLUE we'd show
+                    // for it means anything to a player. Search every definition Datamuse gave
+                    // us for this word and require at least one with a positive relevance score
+                    // before rescuing; otherwise we'd be exporting a real word paired with a
+                    // clue that gives no legitimate hint (e.g. "BULL" defined as "to polish
+                    // boots" in a Stars & Omens category). This makes the rescue fully automatic
+                    // and content-driven — no manual judgment call needed per word.
+                    const candidateDefs = (r.defs && r.defs.length) ? r.defs : [r.clue];
+                    let bestDef = null;
+                    let bestDefScore = -Infinity;
+                    for (const d of candidateDefs) {
+                        const s = scoreDefinitionForRescue(r.word, d, cat, keywords);
+                        if (s > bestDefScore) { bestDefScore = s; bestDef = d; }
+                    }
+                    if (bestDef !== null && bestDefScore > 0) {
+                        r.clue = bestDef;
+                        r._assocRescued = true;
+                        r._assocScore = bestAssocScore;
+                        r._clueRelevanceScore = bestDefScore;
+                        rescued.push(r);
+                    }
+                    // else: word is associated but no definition we have can back it up with a
+                    // legible clue — dropped rather than exported with a misleading one.
                 }
                 done++;
                 if (onProgress) onProgress(done, nearMisses.length);
@@ -1515,7 +1560,7 @@
                   ${r.autoDecided ? `<span class="wc-auto" title="Auto-decided — verify this one">AUTO</span>` : ''}
                   ${r._decisionReason ? `<span class="wc-reason" title="${r._decisionReason} (score ${r._relevanceScore ?? '?'})">ℹ️</span>` : ''}
                   ${r._dictConfirmed ? '<span class="wc-dict" title="A free-dictionary definition also matched this category">📖</span>' : ''}
-                  ${r._assocRescued ? `<span class="wc-concept" title="Rescued via Datamuse word-association data — score ${r._assocScore}">🔗</span>` : ''}
+                  ${r._assocRescued ? `<span class="wc-concept" title="Rescued via word-association (score ${r._assocScore}) — best available definition scored ${r._clueRelevanceScore} for topical relevance">🔗</span>` : ''}
                   <span class="wc-seed" title="Source seed">${r.sourceSeed || '—'}</span>
                   <select class="tier-select" data-idx="${i}">
                     <option value="easy"${r.tier === 'easy' ? ' selected' : ''}>easy</option>
