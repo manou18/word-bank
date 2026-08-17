@@ -410,6 +410,69 @@
             border-color: #8a723f;
         }
 
+        .wc-seed {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: #6b73a0;
+            background: #1c2344;
+            border: 1px solid #3c4576;
+            border-radius: 6px;
+            padding: 1px 6px;
+            white-space: nowrap;
+        }
+
+        /* seed analysis */
+        .seed-analysis {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+        .sa-row {
+            display: grid;
+            grid-template-columns: 1fr 60px 60px 90px;
+            align-items: center;
+            gap: 10px;
+            background: #232a52;
+            border: 1px solid #2e3660;
+            border-radius: 9px;
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+        .sa-row.head {
+            background: transparent;
+            border: none;
+            color: #6b73a0;
+            font-size: 10.5px;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            padding: 0 12px;
+        }
+        .sa-seed {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            color: #f1ecdd;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .sa-num {
+            font-family: 'JetBrains Mono', monospace;
+            color: #a9b0d4;
+            text-align: center;
+        }
+        .sa-bar-wrap {
+            background: #1c2344;
+            border-radius: 5px;
+            height: 8px;
+            overflow: hidden;
+        }
+        .sa-bar {
+            height: 100%;
+            background: var(--cat-color, #d4a24c);
+            border-radius: 5px;
+        }
+
         .empty-note {
             color: #6b73a0;
             font-size: 13px;
@@ -506,11 +569,13 @@
                     <div class="btn-row">
                         <button class="btn small" id="selAllBtn">Select all</button>
                         <button class="btn small" id="selNoneBtn">Select none</button>
+                        <button class="btn small" id="seedAnalysisBtn">Seed analysis ▾</button>
                     </div>
                     <div class="btn-row">
                         <button class="btn small gold" id="exportBtn">Export selected →</button>
                     </div>
                 </div>
+                <div class="seed-analysis" id="seedAnalysis" style="display:none;"></div>
                 <div class="result-grid" id="resultGrid"></div>
             </section>
 
@@ -740,7 +805,7 @@
                 const clue = onDomainDefs[0];
                 if (!isSafeCandidate(entry, clue)) continue;
                 seenSoFar.add(word);
-                found.push({ word, clue, tier: tierForLength(word.length), checked: false });
+                found.push({ word, clue, tier: tierForLength(word.length), checked: false, sourceSeed: seed });
             }
             return found;
         }
@@ -782,6 +847,7 @@
                 `Found ${results.length} candidate word${results.length === 1 ? '' : 's'} across ${activeSeeds.length} search term${activeSeeds.length === 1 ? '' : 's'}.`;
             statusEl.className = "status-line ok";
             renderResults();
+            renderSeedAnalysis();
         }
 
         /* ============================= RENDERING ============================= */
@@ -849,6 +915,7 @@
               <div class="wc-body">
                 <div class="wc-top">
                   <span class="wc-word">${r.word}</span>
+                  <span class="wc-seed" title="Source seed">${r.sourceSeed || '—'}</span>
                   <select class="tier-select" data-idx="${i}">
                     <option value="easy"${r.tier === 'easy' ? ' selected' : ''}>easy</option>
                     <option value="medium"${r.tier === 'medium' ? ' selected' : ''}>medium</option>
@@ -868,6 +935,7 @@
                     chk.closest('.word-card').classList.toggle('checked', chk.checked);
                     document.getElementById('checkedCount').textContent = results.filter(r => r.checked)
                         .length;
+                    renderSeedAnalysis();
                 });
             });
             grid.querySelectorAll('.tier-select').forEach(sel => {
@@ -880,6 +948,35 @@
                     results[parseInt(inp.dataset.idx)].clue = inp.value;
                 });
             });
+        }
+
+        function renderSeedAnalysis() {
+            const box = document.getElementById('seedAnalysis');
+            if (box.style.display === 'none') return; // don't bother computing while hidden
+            const bySeed = {};
+            results.forEach(r => {
+                const s = r.sourceSeed || '(unknown)';
+                if (!bySeed[s]) bySeed[s] = { total: 0, checked: 0 };
+                bySeed[s].total++;
+                if (r.checked) bySeed[s].checked++;
+            });
+            const rows = Object.entries(bySeed)
+                .map(([seed, v]) => ({ seed, total: v.total, checked: v.checked, pct: v.checked / v.total }))
+                .sort((a, b) => b.pct - a.pct || b.total - a.total);
+            const catColor = CATEGORIES[activeCat].color;
+            const head = `
+            <div class="sa-row head">
+              <span>Seed</span><span>Found</span><span>Kept</span><span>Kept %</span>
+            </div>`;
+            const body = rows.map(r => `
+            <div class="sa-row">
+              <span class="sa-seed" title="${r.seed}">${r.seed}</span>
+              <span class="sa-num">${r.total}</span>
+              <span class="sa-num">${r.checked}</span>
+              <div class="sa-bar-wrap"><div class="sa-bar" style="--cat-color:${catColor}; width:${Math.round(r.pct*100)}%"></div></div>
+            </div>`).join('');
+            box.innerHTML = head + body + `
+            <p class="tag-note">"Kept %" = share of each seed's words you've checked ✓ so far — a live, rough proxy for how relevant that seed is. Recompute after reviewing more words for a fuller picture.</p>`;
         }
 
         /* ============================= EXPORT ============================= */
@@ -924,10 +1021,20 @@
         document.getElementById('selAllBtn').addEventListener('click', () => {
             results.forEach(r => r.checked = true);
             renderResults();
+            renderSeedAnalysis();
         });
         document.getElementById('selNoneBtn').addEventListener('click', () => {
             results.forEach(r => r.checked = false);
             renderResults();
+            renderSeedAnalysis();
+        });
+        document.getElementById('seedAnalysisBtn').addEventListener('click', () => {
+            const box = document.getElementById('seedAnalysis');
+            const btn = document.getElementById('seedAnalysisBtn');
+            const showing = box.style.display !== 'none';
+            box.style.display = showing ? 'none' : 'flex';
+            btn.textContent = showing ? 'Seed analysis ▾' : 'Seed analysis ▴';
+            if (!showing) renderSeedAnalysis();
         });
         document.getElementById('exportBtn').addEventListener('click', () => {
             const block = buildExportBlock();
